@@ -381,7 +381,7 @@ body {
 }
 
 #python-output {
-    width: 300px;
+    width: 40vw;
     background-color: #181818;
     color: #0f0;
     border-left: 1px solid #444;

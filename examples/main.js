@@ -87,6 +87,7 @@ export class MuJoCoDemo {
     const sceneSelector = document.getElementById('scene-selector');
     const scenes = {
         "Humanoid": "humanoid.xml",
+        "Spot Robot": "boston_dynamics_spot/scene.xml",
     };
     
     // Populate scene selector
