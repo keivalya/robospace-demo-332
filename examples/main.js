@@ -6,6 +6,7 @@ import { DragStateManager } from './utils/DragStateManager.js';
 import { setupGUI, downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
 import   load_mujoco        from '../dist/mujoco_wasm.js';
 
+const loadPyodide = window.loadPyodide;
 // Load the MuJoCo Module
 const mujoco = await load_mujoco();
 
@@ -31,9 +32,12 @@ export class MuJoCoDemo {
     this.tmpVec  = new THREE.Vector3();
     this.tmpQuat = new THREE.Quaternion();
     this.updateGUICallbacks = [];
+    this.setupToolbar();
+    this.setupPythonIntegration();
 
-    this.container = document.createElement( 'div' );
-    document.body.appendChild( this.container );
+    // this.container = document.createElement( 'div' );
+    // document.body.appendChild( this.container );
+    this.container = document.getElementById('appbody');
 
     this.scene = new THREE.Scene();
     this.scene.name = 'scene';
@@ -52,7 +56,10 @@ export class MuJoCoDemo {
 
     this.renderer = new THREE.WebGLRenderer( { antialias: true } );
     this.renderer.setPixelRatio( window.devicePixelRatio );
-    this.renderer.setSize( window.innerWidth, window.innerHeight );
+    // this.renderer.setSize( window.innerWidth, window.innerHeight );
+    const width = window.innerWidth - 40; // Account for collapsed robot info panel
+    const height = window.innerHeight - 60 - 250; // Account for toolbar and python IDE
+    this.renderer.setSize(width, height);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // default THREE.PCFShadowMap
     this.renderer.setAnimationLoop( this.render.bind(this) );
@@ -72,7 +79,170 @@ export class MuJoCoDemo {
 
     // Initialize the Drag State Manager.
     this.dragStateManager = new DragStateManager(this.scene, this.renderer, this.camera, this.container.parentElement, this.controls);
+    this.onWindowResize();
   }
+
+  setupToolbar() {
+    // Scene selector
+    const sceneSelector = document.getElementById('scene-selector');
+    const scenes = {
+        "Humanoid": "humanoid.xml",
+    };
+    
+    // Populate scene selector
+    Object.entries(scenes).forEach(([name, file]) => {
+        const option = document.createElement('option');
+        option.value = file;
+        option.textContent = name;
+        if (file === this.params.scene) option.selected = true;
+        sceneSelector.appendChild(option);
+    });
+    
+    sceneSelector.addEventListener('change', async (e) => {
+        this.params.scene = e.target.value;
+        await this.reloadScene();
+    });
+    
+    // Pause button
+    const pauseButton = document.getElementById('pause-button');
+    pauseButton.addEventListener('click', () => {
+        this.params.paused = !this.params.paused;
+        pauseButton.textContent = this.params.paused ? '▶ Play' : '⏸ Pause';
+        pauseButton.classList.toggle('active', this.params.paused);
+    });
+    
+    // Reset button
+    document.getElementById('reset-button').addEventListener('click', () => {
+        if (this.simulation) {
+            this.simulation.resetData();
+            this.simulation.forward();
+        }
+    });
+    
+    // Reload button
+    document.getElementById('reload-button').addEventListener('click', async () => {
+        await this.reloadScene();
+    });
+    
+    // Noise sliders
+    const noiseRateSlider = document.getElementById('noise-rate-slider');
+    const noiseRateValue = document.getElementById('noise-rate-value');
+    noiseRateSlider.value = this.params.ctrlnoiserate;
+    noiseRateValue.textContent = this.params.ctrlnoiserate.toFixed(2);
+    
+    noiseRateSlider.addEventListener('input', (e) => {
+        this.params.ctrlnoiserate = parseFloat(e.target.value);
+        noiseRateValue.textContent = this.params.ctrlnoiserate.toFixed(2);
+    });
+    
+    const noiseScaleSlider = document.getElementById('noise-scale-slider');
+    const noiseScaleValue = document.getElementById('noise-scale-value');
+    noiseScaleSlider.value = this.params.ctrlnoisestd;
+    noiseScaleValue.textContent = this.params.ctrlnoisestd.toFixed(2);
+    
+    noiseScaleSlider.addEventListener('input', (e) => {
+        this.params.ctrlnoisestd = parseFloat(e.target.value);
+        noiseScaleValue.textContent = this.params.ctrlnoisestd.toFixed(2);
+    });
+    
+    // Robot info panel toggle
+    const toggleInfo = document.getElementById('toggle-info');
+    const robotInfo = document.getElementById('robot-info');
+    const pythonIDE = document.getElementById('python-ide');
+
+    toggleInfo.addEventListener('click', () => {
+        robotInfo.classList.toggle('collapsed');
+        const isCollapsed = robotInfo.classList.contains('collapsed');
+        toggleInfo.textContent = isCollapsed ? '◀' : '▶';
+        pythonIDE.classList.toggle('with-info', !isCollapsed);
+        setTimeout(() => this.onWindowResize(), 10); // Small delay for CSS transition
+    });
+}
+
+async setupPythonIntegration() {
+  // Initialize Pyodide
+  if (window.pyodide) return; // Already loaded
+  
+  try {
+      window.pyodide = await loadPyodide({
+          indexURL: "https://cdn.jsdelivr.net/pyodide/v0.23.4/full/"
+      });
+      console.log("Pyodide loaded successfully");
+      
+      // Load numpy package
+      await window.pyodide.loadPackage(["numpy"]);
+      console.log("NumPy package loaded");
+      
+      // Initialize Python environment
+      await this.initializePythonEnvironment();
+  } catch (error) {
+      console.error("Failed to load Pyodide:", error);
+  }
+}
+
+async reloadScene() {
+    // Delete the old scene and load the new scene
+    this.scene.remove(this.scene.getObjectByName("MuJoCo Root"));
+    [this.model, this.state, this.simulation, this.bodies, this.lights] =
+        await loadSceneFromURL(this.mujoco, this.params.scene, this);
+    this.simulation.forward();
+    
+    // Update robot info
+    this.updateRobotInfo();
+    
+    // Update Python environment
+    if (window.pyodide) {
+        await this.updatePythonEnvironment();
+    }
+    
+    // Camera reset
+    this.camera.position.set(2.0, 1.7, 1.7);
+    this.controls.target.set(0, 0.7, 0);
+    this.controls.update();
+}
+
+updateRobotInfo() {
+    if (!this.model) return;
+    
+    // Update model name
+    document.getElementById('model-name').textContent = this.params.scene.replace('.xml', '');
+    document.getElementById('body-count').textContent = this.model.nbody;
+    document.getElementById('joint-count').textContent = this.model.njnt;
+    
+    // Update joints table
+    const tbody = document.getElementById('joints-tbody');
+    tbody.innerHTML = '';
+    
+    // Get joint and actuator information
+    const textDecoder = new TextDecoder("utf-8");
+    const names = textDecoder.decode(this.model.names).split('\0');
+    
+    for (let i = 0; i < this.model.nu; i++) {
+        const row = document.createElement('tr');
+        
+        const nameIndex = this.model.name_actuatoradr[i];
+        const name = names[nameIndex] || `actuator_${i}`;
+        
+        let range = [-1, 1];
+        if (this.model.actuator_ctrllimited[i]) {
+            const rangeStart = i * 2;
+            range = [
+                this.model.actuator_ctrlrange[rangeStart],
+                this.model.actuator_ctrlrange[rangeStart + 1]
+            ];
+        }
+        
+        row.innerHTML = `
+            <td>${i}</td>
+            <td>${name}</td>
+            <td>actuator</td>
+            <td>[${range[0].toFixed(2)}, ${range[1].toFixed(2)}]</td>
+            <td class="joint-value" id="joint-val-${i}">0.00</td>
+        `;
+        
+        tbody.appendChild(row);
+    }
+}
 
   async init() {
     // Download the the examples to MuJoCo's virtual file system
@@ -86,10 +256,37 @@ export class MuJoCoDemo {
     // setupGUI(this);
   }
 
+  async initializePythonEnvironment() {
+      try {
+          const pythonModule = await import('./pythonIntegration.js');
+          await pythonModule.initializePythonEnvironment(this);
+          pythonModule.setupPythonIDE(this);
+      } catch (error) {
+          console.error("Error setting up Python environment:", error);
+      }
+  }
+
+  async updatePythonEnvironment() {
+      const { updatePythonEnvironment } = await import('./pythonIntegration.js');
+      await updatePythonEnvironment(this);
+  }
+
   onWindowResize() {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const toolbar = document.getElementById('toolbar');
+    const pythonIDE = document.getElementById('python-ide');
+    const robotInfo = document.getElementById('robot-info');
+    
+    // Calculate available space
+    const toolbarHeight = 60;
+    const ideHeight = pythonIDE.classList.contains('collapsed') ? 40 : 250;
+    const infoWidth = robotInfo.classList.contains('collapsed') ? 40 : 400;
+    
+    const width = window.innerWidth - infoWidth;
+    const height = window.innerHeight - toolbarHeight - ideHeight;
+    
+    this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize( window.innerWidth, window.innerHeight );
+    this.renderer.setSize(width, height);
   }
 
   render(timeMS) {
@@ -109,6 +306,16 @@ export class MuJoCoDemo {
             currentCtrl[i] = rate * currentCtrl[i] + scale * standardNormal();
             this.params["Actuator " + i] = currentCtrl[i];
           }
+        }
+
+        // Update joint value displays
+        if (this.model && this.simulation) {
+            for (let i = 0; i < this.model.nu; i++) {
+                const element = document.getElementById(`joint-val-${i}`);
+                if (element) {
+                    element.textContent = this.simulation.ctrl[i].toFixed(2);
+                }
+            }
         }
 
         // Clear old perturbations, apply new ones.
