@@ -27,7 +27,8 @@ export function setupGUI(parentContext) {
   // Add scene selection dropdown.
   let reload = reloadFunc.bind(parentContext);
   parentContext.gui.add(parentContext.params, 'scene', {
-    "Humanoid": "humanoid.xml"
+    "Humanoid": "humanoid.xml",
+    "Spot Robot": "boston_dynamics_spot/scene.xml",
   }).name('Example Scene').onChange(reload);
 
   // Add a help menu.
@@ -554,8 +555,66 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
  * @param {mujoco} mujoco */
 export async function downloadExampleScenesFolder(mujoco) {
   let allFiles = [
-    "humanoid.xml",
-    "scene.xml",
+    "boston_dynamics_spot/assets/arm_link_el0.obj",
+    "boston_dynamics_spot/assets/arm_link_el0_coll.obj",
+    "boston_dynamics_spot/assets/arm_link_el1_0.obj",
+    "boston_dynamics_spot/assets/arm_link_el1_1.obj",
+    "boston_dynamics_spot/assets/arm_link_el1_lip.obj",
+    "boston_dynamics_spot/assets/arm_link_el1_main.obj",
+    "boston_dynamics_spot/assets/arm_link_fngr_0.obj",
+    "boston_dynamics_spot/assets/arm_link_fngr_1.obj",
+    "boston_dynamics_spot/assets/arm_link_hr0.obj",
+    "boston_dynamics_spot/assets/arm_link_hr0_coll.obj",
+    "boston_dynamics_spot/assets/arm_link_sh0.obj",
+    "boston_dynamics_spot/assets/arm_link_sh0_base.obj",
+    "boston_dynamics_spot/assets/arm_link_sh0_left_motor.obj",
+    "boston_dynamics_spot/assets/arm_link_sh0_right_motor.obj",
+    "boston_dynamics_spot/assets/arm_link_sh1_0.obj",
+    "boston_dynamics_spot/assets/arm_link_sh1_1.obj",
+    "boston_dynamics_spot/assets/arm_link_wr0.obj",
+    "boston_dynamics_spot/assets/arm_link_wr0_0.obj",
+    "boston_dynamics_spot/assets/arm_link_wr0_1.obj",
+    "boston_dynamics_spot/assets/arm_link_wr1.obj",
+    "boston_dynamics_spot/assets/arm_link_wr1_0.obj",
+    "boston_dynamics_spot/assets/arm_link_wr1_1.obj",
+    "boston_dynamics_spot/assets/body_0.obj",
+    "boston_dynamics_spot/assets/body_1.obj",
+    "boston_dynamics_spot/assets/body_collision.obj",
+    "boston_dynamics_spot/assets/front_jaw.obj",
+    "boston_dynamics_spot/assets/front_left_hip.obj",
+    "boston_dynamics_spot/assets/front_left_lower_leg.obj",
+    "boston_dynamics_spot/assets/front_left_upper_leg_0.obj",
+    "boston_dynamics_spot/assets/front_left_upper_leg_1.obj",
+    "boston_dynamics_spot/assets/front_right_hip.obj",
+    "boston_dynamics_spot/assets/front_right_lower_leg.obj",
+    "boston_dynamics_spot/assets/front_right_upper_leg_0.obj",
+    "boston_dynamics_spot/assets/front_right_upper_leg_1.obj",
+    "boston_dynamics_spot/assets/jaw_tooth.obj",
+    "boston_dynamics_spot/assets/left_finger.obj",
+    "boston_dynamics_spot/assets/left_hinge.obj",
+    "boston_dynamics_spot/assets/left_lower_leg_collision.obj",
+    "boston_dynamics_spot/assets/left_tooth.obj",
+    "boston_dynamics_spot/assets/left_upper_leg_collision.obj",
+    "boston_dynamics_spot/assets/middle_jaw.obj",
+    "boston_dynamics_spot/assets/rear_left_hip.obj",
+    "boston_dynamics_spot/assets/rear_left_lower_leg.obj",
+    "boston_dynamics_spot/assets/rear_left_upper_leg_0.obj",
+    "boston_dynamics_spot/assets/rear_left_upper_leg_1.obj",
+    "boston_dynamics_spot/assets/rear_right_hip.obj",
+    "boston_dynamics_spot/assets/rear_right_lower_leg.obj",
+    "boston_dynamics_spot/assets/rear_right_upper_leg_0.obj",
+    "boston_dynamics_spot/assets/rear_right_upper_leg_1.obj",
+    "boston_dynamics_spot/assets/right_finger.obj",
+    "boston_dynamics_spot/assets/right_hinge.obj",
+    "boston_dynamics_spot/assets/right_lower_leg_collision.obj",
+    "boston_dynamics_spot/assets/right_tooth.obj",
+    "boston_dynamics_spot/assets/right_upper_leg_collision.obj",
+    "boston_dynamics_spot/scene.xml",
+    "boston_dynamics_spot/scene_arm.xml",
+    "boston_dynamics_spot/spot.png",
+    "boston_dynamics_spot/spot.xml",
+    "boston_dynamics_spot/spot_arm.xml",
+    "humanoid.xml"
   ];
 
   let requests = allFiles.map((url) => fetch("./examples/scenes/" + url));
