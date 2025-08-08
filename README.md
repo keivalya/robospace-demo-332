@@ -39,34 +39,24 @@ The toolbar at the top of the page provides the following controls:
 
 The Python IDE on the right side of the screen allows you to control the robot model's actuators using Python code. The IDE is powered by Pyodide, which runs Python directly in the browser.
 
-To access the simulation, you can use the `js.demo` object, which is an instance of the `MuJoCoDemo` class. The `demo` object provides access to the `model`, `state`, and `simulation` objects.
+To control the robot, you need to define a `controller` function in the Python IDE. This function will be called at each step of the simulation.
 
 **Example: Actuating Joints**
 
-To actuate the joints of the robot, you can modify the `simulation.ctrl` array. The following example sets the control values for the first two actuators:
+Here is an example of a `controller` function that applies a sinusoidal control to the first actuator:
 
 ```python
 import js
-import time
 
-demo = js.demo
-simulation = demo.simulation
-model = demo.model
-
-# Get the number of actuators
-num_actuators = model.nu
-
-# Set the control values for the first two actuators
-if num_actuators >= 2:
-    simulation.ctrl[0] = 0.5
-    simulation.ctrl[1] = -0.5
-
-# You can also create a loop to animate the robot
-for i in range(100):
-    simulation.ctrl[0] = 0.5 * js.Math.sin(i * 0.1)
-    simulation.step()
-    time.sleep(0.05)
+def controller(model, data):
+    # model: the MuJoCo model object
+    # data: the MuJoCo simulation data object
+    
+    # Apply a sinusoidal control to the first actuator
+    data.ctrl[0] = 0.5 * js.Math.sin(data.time * 10)
 ```
+
+Click the "Run" button to define or update the controller. The simulation will then use your Python code to control the robot.
 
 ## Building
 

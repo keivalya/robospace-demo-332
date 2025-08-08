@@ -3,47 +3,387 @@
     <head>
         <title>MuJoCo Demo</title>
         <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-        <meta name="application-name"   content="mujoco_wasm">
-        <meta name="description"        content="MuJoCo Testbed">
-        <meta name="keywords"           content="MuJoCo">
-        <meta name="author"             content="zalo">
-        <meta name="viewport"           content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no, shrink-to-fit=0">
-        <meta name="theme-color"        content="#ffffff">
-        <link rel ="icon" type="image/x-icon" href="./examples/favicon.png">
+        <meta name="application-name" content="mujoco_wasm">
+        <meta name="description" content="MuJoCo Testbed">
+        <meta name="keywords" content="MuJoCo">
+        <meta name="author" content="zalo">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no, shrink-to-fit=0">
+        <meta name="theme-color" content="#ffffff">
+        <link rel="icon" type="image/x-icon" href="./examples/favicon.png">
         <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+        <!-- <script src="./dist/mujoco_wasm.js"></script> -->
+        
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                background-color: #1a1a1a;
+                overflow: hidden;
+                position: fixed;
+                width: 100%;
+                height: 100%;
+                touch-action: none;
+                -webkit-touch-callout: none;
+                -webkit-user-select: none;
+                -khtml-user-select: none;
+                -moz-user-select: none;
+                -ms-user-select: none;
+                user-select: none;
+            }
+            
+            #toolbar {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 60px;
+                background: linear-gradient(to bottom, #2a2a2a, #1f1f1f);
+                border-bottom: 1px solid #444;
+                display: flex;
+                align-items: center;
+                padding: 0 20px;
+                gap: 15px;
+                z-index: 1000;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            }
+            
+            .toolbar-section {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 0 10px;
+                border-right: 1px solid #444;
+            }
+            
+            .toolbar-section:last-child {
+                border-right: none;
+            }
+            
+            .toolbar-label {
+                color: #aaa;
+                font-size: 12px;
+                font-weight: 500;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            
+            .toolbar-button {
+                background: linear-gradient(to bottom, #3a3a3a, #2a2a2a);
+                color: #fff;
+                border: 1px solid #555;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                transition: all 0.2s ease;
+            }
+            
+            .toolbar-button:hover {
+                background: linear-gradient(to bottom, #4a4a4a, #3a3a3a);
+                border-color: #666;
+                transform: translateY(-1px);
+            }
+            
+            .toolbar-button:active {
+                transform: translateY(0);
+            }
+            
+            .toolbar-button.active {
+                background: linear-gradient(to bottom, #0a7fff, #0066dd);
+                border-color: #0066dd;
+            }
+            
+            .toolbar-select {
+                background: #2a2a2a;
+                color: #fff;
+                border: 1px solid #555;
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-size: 14px;
+                cursor: pointer;
+                min-width: 150px;
+            }
+            
+            .toolbar-slider-container {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            
+            .toolbar-slider {
+                width: 100px;
+                height: 4px;
+                -webkit-appearance: none;
+                appearance: none;
+                background: #444;
+                border-radius: 2px;
+                outline: none;
+            }
+            
+            .toolbar-slider::-webkit-slider-thumb {
+                -webkit-appearance: none;
+                appearance: none;
+                width: 16px;
+                height: 16px;
+                background: #0a7fff;
+                border-radius: 50%;
+                cursor: pointer;
+            }
+            
+            .toolbar-slider::-moz-range-thumb {
+                width: 16px;
+                height: 16px;
+                background: #0a7fff;
+                border-radius: 50%;
+                cursor: pointer;
+                border: none;
+            }
+            
+            .toolbar-value {
+                color: #0a7fff;
+                font-size: 12px;
+                font-weight: 600;
+                min-width: 35px;
+                text-align: right;
+            }
+            
+            #appbody {
+                position: absolute;
+                top: 60px;
+                left: 0;
+                right: 0;
+                bottom: 250px;
+            }
+            
+            #python-ide {
+                position: absolute;
+                bottom: 0;
+                left: 0;
+                width: 100%;
+                height: 250px;
+                background: #1e1e1e;
+                display: flex;
+                flex-direction: column;
+                z-index: 1000;
+                border-top: 2px solid #0a7fff;
+                transition: height 0.3s ease;
+            }
+            
+            #python-ide.collapsed {
+                height: 40px;
+            }
+            
+            .ide-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 8px 15px;
+                background: linear-gradient(to bottom, #2a2a2a, #222);
+                border-bottom: 1px solid #444;
+            }
+            
+            .ide-title {
+                color: #fff;
+                font-size: 14px;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            
+            .ide-controls {
+                display: flex;
+                gap: 10px;
+            }
+            
+            .ide-button {
+                background: linear-gradient(to bottom, #0a7fff, #0066dd);
+                color: white;
+                border: none;
+                padding: 6px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 13px;
+                font-weight: 500;
+                transition: all 0.2s ease;
+            }
+            
+            .ide-button:hover {
+                background: linear-gradient(to bottom, #1a8fff, #0077ee);
+                transform: translateY(-1px);
+            }
+            
+            .ide-button.clear {
+                background: linear-gradient(to bottom, #666, #555);
+            }
+            
+            .ide-button.clear:hover {
+                background: linear-gradient(to bottom, #777, #666);
+            }
+            
+            .ide-button.toggle {
+                background: transparent;
+                color: #aaa;
+                padding: 4px 8px;
+                font-size: 18px;
+            }
+            
+            .ide-button.toggle:hover {
+                color: #fff;
+                transform: none;
+            }
+            
+            #python-editor-container {
+                flex: 1;
+                display: flex;
+                position: relative;
+                overflow: hidden;
+            }
+            
+            #python-editor-container.hidden {
+                display: none;
+            }
+            
+            #python-code {
+                flex: 1;
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                border: none;
+                padding: 10px;
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 14px;
+                line-height: 1.5;
+                resize: none;
+                outline: none;
+            }
+            
+            #python-output {
+                width: 300px;
+                background-color: #181818;
+                color: #0f0;
+                border-left: 1px solid #444;
+                padding: 10px;
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 12px;
+                overflow-y: auto;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+            }
+            
+            .output-label {
+                color: #888;
+                font-size: 11px;
+                margin-bottom: 5px;
+            }
+            
+            #error {
+                position: absolute;
+                top: 70px;
+                right: 10px;
+                max-width: 400px;
+                background: rgba(255, 0, 0, 0.1);
+                border: 1px solid #ff0000;
+                border-radius: 4px;
+                padding: 10px;
+                color: #ff6666;
+                font-family: monospace;
+                font-size: 12px;
+                z-index: 999;
+                display: none;
+            }
+            
+            #error:not(:empty) {
+                display: block;
+            }
+        </style>
     </head>
 
-    <body style="margin:0px; background-color:rgb(255, 255, 255); overflow:hidden; position:fixed; min-height: 100%;
-                 touch-action: none;
-                 -webkit-touch-callout: none; /* iOS Safari */
-                 -webkit-user-select: none; /* Safari */
-                 -khtml-user-select: none; /* Konqueror HTML */
-                 -moz-user-select: none; /* Old versions of Firefox */
-                 -ms-user-select: none; /* Internet Explorer/Edge */
-                 user-select: none; /* Non-prefixed version, currently supported by Chrome, Edge, Opera and Firefox */">
-        <h1 hidden></h1> <!-- Puts the Lighthouse Score over 90 heheh-->
+    <body>
+        <h1 hidden></h1>
 
-		<!-- Import maps polyfill -->
-		<script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+        <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
 
-        <!-- Allows three.js Examples to work without building -->
         <script type="importmap">
             { "imports": { "three": "./node_modules/three/build/three.module.js", "three/addons/": "./node_modules/three/examples/jsm/"} }
         </script>
 
-        <div id="toolbar" style="position: absolute; top: 0; left: 0; width: 100%; height: 50px; background-color: #222; color: white; display: flex; align-items: center; padding: 0 10px; z-index: 1000;">
-            <!-- Toolbar content will be added here -->
+        <!-- Toolbar -->
+        <div id="toolbar">
+            <div class="toolbar-section">
+                <label class="toolbar-label">Scene</label>
+                <select id="scene-selector" class="toolbar-select"></select>
+            </div>
+            
+            <div class="toolbar-section">
+                <button id="pause-button" class="toolbar-button">⏸ Pause</button>
+                <button id="reset-button" class="toolbar-button">↺ Reset</button>
+                <button id="reload-button" class="toolbar-button">⟲ Reload</button>
+            </div>
+            
+            <div class="toolbar-section">
+                <label class="toolbar-label">Noise Rate</label>
+                <div class="toolbar-slider-container">
+                    <input type="range" id="noise-rate-slider" class="toolbar-slider" min="0" max="2" step="0.01" value="0.1">
+                    <span id="noise-rate-value" class="toolbar-value">0.10</span>
+                </div>
+            </div>
+            
+            <div class="toolbar-section">
+                <label class="toolbar-label">Noise Scale</label>
+                <div class="toolbar-slider-container">
+                    <input type="range" id="noise-scale-slider" class="toolbar-slider" min="0" max="2" step="0.01" value="0">
+                    <span id="noise-scale-value" class="toolbar-value">0.00</span>
+                </div>
+            </div>
         </div>
-        <div id="appbody" style="position: absolute; top: 50px;">
-            <!--<div id="error"></div>
-            <script type="module" src="./examples/Debug.js"></script>-->
+
+        <!-- Main 3D View -->
+        <div id="appbody">
+            <div id="error"></div>
             <script type="module" src="./examples/main.js"></script>
         </div>
-        <div id="python-ide" style="position: absolute; bottom: 0; left: 0; width: 100%; height: 200px; background-color: #1e1e1e; color: white; display: flex; flex-direction: column; z-index: 1000;">
-            <div style="padding: 5px; background-color: #333;">
-                <button id="run-python">Run</button>
+
+        <!-- Python IDE -->
+        <div id="python-ide">
+            <div class="ide-header">
+                <div class="ide-title">
+                    <span>🐍 Python Controller</span>
+                    <span style="color: #888; font-size: 12px;">Control robot actuation with Python</span>
+                </div>
+                <div class="ide-controls">
+                    <button id="run-python" class="ide-button">▶ Run</button>
+                    <button id="stop-python" class="ide-button">■ Stop</button>
+                    <button id="clear-python" class="ide-button clear">Clear</button>
+                    <button id="toggle-ide" class="ide-button toggle">⌃</button>
+                </div>
             </div>
-            <textarea id="python-code" style="width: 100%; height: 100%; background-color: #1e1e1e; color: white; border: none; font-family: monospace;"></textarea>
+            <div id="python-editor-container">
+                <textarea id="python-code" placeholder="# Enter Python code here to control the robot
+# Example:
+# sim.data.ctrl[0] = 0.5  # Set first actuator
+# sim.data.ctrl[1] = -0.3  # Set second actuator
+# 
+# Available objects:
+# - sim: MuJoCo simulation object
+# - model: MuJoCo model
+# - data: Simulation data
+# - np: NumPy library
+# - time: Time module
+
+import numpy as np
+import time
+
+# Your code here..."></textarea>
+                <div id="python-output">
+                    <div class="output-label">OUTPUT</div>
+                </div>
+            </div>
         </div>
     </body>
 </html>
