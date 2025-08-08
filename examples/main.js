@@ -1,6 +1,5 @@
 
 import * as THREE           from 'three';
-import { GUI              } from '../node_modules/three/examples/jsm/libs/lil-gui.module.min.js';
 import { OrbitControls    } from '../node_modules/three/examples/jsm/controls/OrbitControls.js';
 import { DragStateManager } from './utils/DragStateManager.js';
 import { setupGUI, downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
@@ -8,6 +7,7 @@ import   load_mujoco        from '../dist/mujoco_wasm.js';
 
 // Load the MuJoCo Module
 const mujoco = await load_mujoco();
+const pyodide = await loadPyodide();
 
 // Set up Emscripten's Virtual File System
 var initialScene = "humanoid.xml";
@@ -82,7 +82,6 @@ export class MuJoCoDemo {
     [this.model, this.state, this.simulation, this.bodies, this.lights] =  
       await loadSceneFromURL(mujoco, initialScene, this);
 
-    this.gui = new GUI();
     setupGUI(this);
   }
 
@@ -257,3 +256,18 @@ export class MuJoCoDemo {
 
 let demo = new MuJoCoDemo();
 await demo.init();
+
+window.demo = demo;
+
+async function runPython() {
+    let code = document.getElementById('python-code').value;
+    try {
+        await pyodide.loadPackagesFromImports(code);
+        let results = await pyodide.runPythonAsync(code);
+        console.log('Python script finished successfully');
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+document.getElementById('run-python').addEventListener('click', runPython);
