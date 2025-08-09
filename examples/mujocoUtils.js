@@ -25,11 +25,13 @@ export function setupGUI(parentContext) {
     parentContext.controls.update(); });
 
   // Add scene selection dropdown.
-  let reload = reloadFunc.bind(parentContext);
-  parentContext.gui.add(parentContext.params, 'scene', {
-    "Humanoid": "humanoid.xml",
-    "Spot Robot": "boston_dynamics_spot/scene.xml",
-  }).name('Example Scene').onChange(reload);
+  // let reload = reloadFunc.bind(parentContext);
+  // parentContext.gui.add(parentContext.params, 'scene', {
+  //   "Spot Robot with Arm": "boston_dynamics_spot/scene_arm.xml",
+  //   "Spot Robot": "boston_dynamics_spot/scene.xml",
+  //   "Unitree G1": "unitree_g1/scene.xml",
+  //   "Universal Robots UR5e": "universal_robots_ur5e/scene.xml",
+  // }).name('Example Scene').onChange(reload);
 
   // Add a help menu.
   // Parameters:
@@ -614,7 +616,53 @@ export async function downloadExampleScenesFolder(mujoco) {
     "boston_dynamics_spot/spot.png",
     "boston_dynamics_spot/spot.xml",
     "boston_dynamics_spot/spot_arm.xml",
-    "humanoid.xml"
+    "unitree_h1/assets/left_ankle_link.stl",
+    "unitree_h1/assets/left_elbow_link.stl",
+    "unitree_h1/assets/left_hip_pitch_link.stl",
+    "unitree_h1/assets/left_hip_roll_link.stl",
+    "unitree_h1/assets/left_hip_yaw_link.stl",
+    "unitree_h1/assets/left_knee_link.stl",
+    "unitree_h1/assets/left_shoulder_pitch_link.stl",
+    "unitree_h1/assets/left_shoulder_roll_link.stl",
+    "unitree_h1/assets/left_shoulder_yaw_link.stl",
+    "unitree_h1/assets/logo_link.stl",
+    "unitree_h1/assets/pelvis.stl",
+    "unitree_h1/assets/right_ankle_link.stl",
+    "unitree_h1/assets/right_elbow_link.stl",
+    "unitree_h1/assets/right_hip_pitch_link.stl",
+    "unitree_h1/assets/right_hip_roll_link.stl",
+    "unitree_h1/assets/right_hip_yaw_link.stl",
+    "unitree_h1/assets/right_knee_link.stl",
+    "unitree_h1/assets/right_shoulder_pitch_link.stl",
+    "unitree_h1/assets/right_shoulder_roll_link.stl",
+    "unitree_h1/assets/right_shoulder_yaw_link.stl",
+    "unitree_h1/assets/torso_link.stl",
+    "unitree_h1/h1.png",
+    "unitree_h1/h1.xml",
+    "unitree_h1/scene.xml",
+    "universal_robots_ur5e/assets/base_0.obj",
+    "universal_robots_ur5e/assets/base_1.obj",
+    "universal_robots_ur5e/assets/forearm_0.obj",
+    "universal_robots_ur5e/assets/forearm_1.obj",
+    "universal_robots_ur5e/assets/forearm_2.obj",
+    "universal_robots_ur5e/assets/forearm_3.obj",
+    "universal_robots_ur5e/assets/shoulder_0.obj",
+    "universal_robots_ur5e/assets/shoulder_1.obj",
+    "universal_robots_ur5e/assets/shoulder_2.obj",
+    "universal_robots_ur5e/assets/upperarm_0.obj",
+    "universal_robots_ur5e/assets/upperarm_1.obj",
+    "universal_robots_ur5e/assets/upperarm_2.obj",
+    "universal_robots_ur5e/assets/upperarm_3.obj",
+    "universal_robots_ur5e/assets/wrist1_0.obj",
+    "universal_robots_ur5e/assets/wrist1_1.obj",
+    "universal_robots_ur5e/assets/wrist1_2.obj",
+    "universal_robots_ur5e/assets/wrist2_0.obj",
+    "universal_robots_ur5e/assets/wrist2_1.obj",
+    "universal_robots_ur5e/assets/wrist2_2.obj",
+    "universal_robots_ur5e/assets/wrist3.obj",
+    "universal_robots_ur5e/scene.xml",
+    "universal_robots_ur5e/ur5e.png",
+    "universal_robots_ur5e/ur5e.xml"
   ];
 
   let requests = allFiles.map((url) => fetch("./examples/scenes/" + url));

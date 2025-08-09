@@ -11,9 +11,10 @@ const loadPyodide = window.loadPyodide;
 const mujoco = await load_mujoco();
 
 // Set up Emscripten's Virtual File System
-var initialScene = "humanoid.xml";
+var initialScene = "boston_dynamics_spot/scene_arm.xml";
 mujoco.FS.mkdir('/working');
 mujoco.FS.mount(mujoco.MEMFS, { root: '.' }, '/working');
+await downloadExampleScenesFolder(mujoco);
 mujoco.FS.writeFile("/working/" + initialScene, await(await fetch("./examples/scenes/" + initialScene)).text());
 
 export class MuJoCoDemo {
@@ -86,8 +87,10 @@ export class MuJoCoDemo {
     // Scene selector
     const sceneSelector = document.getElementById('scene-selector');
     const scenes = {
-        "Humanoid": "humanoid.xml",
+        "Spot Robot with Arm": "boston_dynamics_spot/scene_arm.xml",
         "Spot Robot": "boston_dynamics_spot/scene.xml",
+        "Unitree H1": "unitree_h1/scene.xml",
+        "Universal Robots UR5e": "universal_robots_ur5e/scene.xml",
     };
     
     // Populate scene selector
