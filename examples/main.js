@@ -148,19 +148,6 @@ export class MuJoCoDemo {
         this.params.ctrlnoisestd = parseFloat(e.target.value);
         noiseScaleValue.textContent = this.params.ctrlnoisestd.toFixed(2);
     });
-    
-    // Robot info panel toggle
-    // const toggleInfo = document.getElementById('toggle-info');
-    const robotInfo = document.getElementById('robot-info');
-    const pythonIDE = document.getElementById('python-ide');
-
-    // toggleInfo.addEventListener('click', () => {
-    //     robotInfo.classList.toggle('collapsed');
-    //     const isCollapsed = robotInfo.classList.contains('collapsed');
-    //     toggleInfo.textContent = isCollapsed ? '◀' : '▶';
-    //     pythonIDE.classList.toggle('with-info', !isCollapsed);
-    //     setTimeout(() => this.onWindowResize(), 10); // Small delay for CSS transition
-    // });
 }
 
 async setupPythonIntegration() {
@@ -322,7 +309,6 @@ updateRobotInfo() {
             }
         }
 
-        // Clear old perturbations, apply new ones.
         for (let i = 0; i < this.simulation.qfrc_applied.length; i++) { this.simulation.qfrc_applied[i] = 0.0; }
         let dragged = this.dragStateManager.physicsObject;
         if (dragged && dragged.bodyID) {
@@ -338,8 +324,6 @@ updateRobotInfo() {
           let force = toMujocoPos(this.dragStateManager.currentWorld.clone().sub(this.dragStateManager.worldHit).multiplyScalar(this.model.body_mass[bodyID] * 250));
           let point = toMujocoPos(this.dragStateManager.worldHit.clone());
           this.simulation.applyForce(force.x, force.y, force.z, 0, 0, 0, point.x, point.y, point.z, bodyID);
-
-          // TODO: Apply pose perturbations (mocap bodies only).
         }
 
         this.simulation.step();
@@ -373,38 +357,6 @@ updateRobotInfo() {
           pos[addr+0] += offset.x;
           pos[addr+1] += offset.y;
           pos[addr+2] += offset.z;
-
-          //// Save the original root body position
-          //let x  = pos[addr + 0], y  = pos[addr + 1], z  = pos[addr + 2];
-          //let xq = pos[addr + 3], yq = pos[addr + 4], zq = pos[addr + 5], wq = pos[addr + 6];
-
-          //// Clear old perturbations, apply new ones.
-          //for (let i = 0; i < this.simulation.qfrc_applied().length; i++) { this.simulation.qfrc_applied()[i] = 0.0; }
-          //for (let bi = 0; bi < this.model.nbody(); bi++) {
-          //  if (this.bodies[b]) {
-          //    getPosition  (this.simulation.xpos (), bi, this.bodies[bi].position);
-          //    getQuaternion(this.simulation.xquat(), bi, this.bodies[bi].quaternion);
-          //    this.bodies[bi].updateWorldMatrix();
-          //  }
-          //}
-          ////dragStateManager.update(); // Update the world-space force origin
-          //let force = toMujocoPos(this.dragStateManager.currentWorld.clone()
-          //  .sub(this.dragStateManager.worldHit).multiplyScalar(this.model.body_mass()[b] * 0.01));
-          //let point = toMujocoPos(this.dragStateManager.worldHit.clone());
-          //// This force is dumped into xrfc_applied
-          //this.simulation.applyForce(force.x, force.y, force.z, 0, 0, 0, point.x, point.y, point.z, b);
-          //this.simulation.integratePos(this.simulation.qpos(), this.simulation.qfrc_applied(), 1);
-
-          //// Add extra drag to the root body
-          //pos[addr + 0] = x  + (pos[addr + 0] - x ) * 0.1;
-          //pos[addr + 1] = y  + (pos[addr + 1] - y ) * 0.1;
-          //pos[addr + 2] = z  + (pos[addr + 2] - z ) * 0.1;
-          //pos[addr + 3] = xq + (pos[addr + 3] - xq) * 0.1;
-          //pos[addr + 4] = yq + (pos[addr + 4] - yq) * 0.1;
-          //pos[addr + 5] = zq + (pos[addr + 5] - zq) * 0.1;
-          //pos[addr + 6] = wq + (pos[addr + 6] - wq) * 0.1;
-
-
         }
       }
 
