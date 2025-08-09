@@ -150,17 +150,17 @@ export class MuJoCoDemo {
     });
     
     // Robot info panel toggle
-    const toggleInfo = document.getElementById('toggle-info');
+    // const toggleInfo = document.getElementById('toggle-info');
     const robotInfo = document.getElementById('robot-info');
     const pythonIDE = document.getElementById('python-ide');
 
-    toggleInfo.addEventListener('click', () => {
-        robotInfo.classList.toggle('collapsed');
-        const isCollapsed = robotInfo.classList.contains('collapsed');
-        toggleInfo.textContent = isCollapsed ? '◀' : '▶';
-        pythonIDE.classList.toggle('with-info', !isCollapsed);
-        setTimeout(() => this.onWindowResize(), 10); // Small delay for CSS transition
-    });
+    // toggleInfo.addEventListener('click', () => {
+    //     robotInfo.classList.toggle('collapsed');
+    //     const isCollapsed = robotInfo.classList.contains('collapsed');
+    //     toggleInfo.textContent = isCollapsed ? '◀' : '▶';
+    //     pythonIDE.classList.toggle('with-info', !isCollapsed);
+    //     setTimeout(() => this.onWindowResize(), 10); // Small delay for CSS transition
+    // });
 }
 
 async setupPythonIntegration() {
@@ -283,9 +283,9 @@ updateRobotInfo() {
     // Calculate available space
     const toolbarHeight = 60;
     const ideHeight = pythonIDE.classList.contains('collapsed') ? 40 : 250;
-    const infoWidth = robotInfo.classList.contains('collapsed') ? 40 : 400;
+    // const infoWidth = robotInfo.classList.contains('collapsed') ? 40 : 400;
     
-    const width = window.innerWidth - infoWidth;
+    const width = window.innerWidth;
     const height = window.innerHeight - toolbarHeight - ideHeight;
     
     this.camera.aspect = width / height;
