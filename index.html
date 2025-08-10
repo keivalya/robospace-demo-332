@@ -79,30 +79,33 @@
             </div>
         </div>
         <div id="python-editor-container">
-            <textarea id="python-code" placeholder="# Enter Python code here to control the robot
-# Example:
-# sim.data.ctrl[0] = 0.5  # Set first actuator
-# sim.data.ctrl[1] = -0.3  # Set second actuator
-# 
-# Available objects:
-# - sim: MuJoCo simulation object
-# - model: MuJoCo model
-# - data: Simulation data
-# - np: NumPy library
-# - time: Time module
-
-import numpy as np
-import time
-
-# Your code here..."></textarea>
+            <textarea id="python-code" placeholder="# Enter Python code here to control the robot"></textarea>
             <div id="python-output">
                 <div class="output-label">OUTPUT</div>
             </div>
         </div>
     </div>
-    <div id="camera-viewer" style="position: absolute; top: 70px; right: 10px; width: 320px; height: 240px; background: #000; border: 2px solid #0a7fff; display: none; z-index: 1000;">
-        <div style="background: #0a7fff; color: white; padding: 5px; font-size: 12px;">Camera View</div>
-        <canvas id="camera-canvas" width="320" height="240"></canvas>
+    <!-- Camera Viewer Window -->
+    <div id="camera-viewer" class="camera-viewer collapsed" style="display: none;">
+        <div class="camera-header">
+            <span class="camera-title">
+                <span class="camera-icon">📷</span>
+                <span class="camera-name">Camera View</span>
+            </span>
+            <div class="camera-controls">
+                <select id="camera-selector" class="camera-select">
+                    <!-- Options will be populated dynamically -->
+                </select>
+                <button id="toggle-camera" class="camera-toggle">◀</button>
+            </div>
+        </div>
+        <div class="camera-content">
+            <canvas id="camera-canvas" width="320" height="240"></canvas>
+            <div class="camera-info">
+                <span id="camera-fps">FPS: 0</span>
+                <span id="camera-resolution">320x240</span>
+            </div>
+        </div>
     </div>
 </body>
 
