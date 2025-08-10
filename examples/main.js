@@ -91,6 +91,7 @@ export class MuJoCoDemo {
         "Spot Robot": "boston_dynamics_spot/scene.xml",
         "Unitree H1": "unitree_h1/scene.xml",
         "Universal Robots UR5e": "universal_robots_ur5e/scene.xml",
+        "Google Barkour VB": "google_barkour_vb/scene.xml",
     };
     
     // Populate scene selector
