@@ -123,96 +123,51 @@ export async function initializePythonEnvironment(demo) {
             return demo.model.ncam;
         };
 
-        window.renderCamera = (cameraId) => {
+        window.getCameraInfo = (cameraId) => {
             if (!demo.model || !demo.simulation) return null;
             if (cameraId >= demo.model.ncam) return null;
-
-            // Create offscreen renderer for camera view
-            const width = 640;  // Camera resolution
-            const height = 480;
-
-            // Create render target
-            const renderTarget = new THREE.WebGLRenderTarget(width, height);
-            const renderer = demo.renderer;
-
-            // Save current render target
-            const currentRenderTarget = renderer.getRenderTarget();
-
-            // Create camera from MuJoCo camera parameters
-            const mjCamera = new THREE.PerspectiveCamera();
-
-            // Get MuJoCo camera position and orientation
-            const camPos = new THREE.Vector3();
-            const camQuat = new THREE.Quaternion();
-
-            // Camera body ID
+            
+            const textDecoder = new TextDecoder("utf-8");
+            const names = textDecoder.decode(demo.model.names).split('\0');
+            const nameIndex = demo.model.name_camadr[cameraId];
+            const camName = names[nameIndex] || `camera_${cameraId}`;
+            
+            // Get camera parameters
             const camBodyId = demo.model.cam_bodyid[cameraId];
-
-            // Get camera position from body
-            if (camBodyId >= 0) {
-                getPosition(demo.simulation.xpos, camBodyId, camPos);
-                getQuaternion(demo.simulation.xquat, camBodyId, camQuat);
-
-                // Apply camera offset
-                const camPosOffset = new THREE.Vector3(
-                    demo.model.cam_pos[cameraId * 3],
-                    demo.model.cam_pos[cameraId * 3 + 2],
-                    -demo.model.cam_pos[cameraId * 3 + 1]
-                );
-                camPos.add(camPosOffset);
-            }
-
-            mjCamera.position.copy(camPos);
-            mjCamera.quaternion.copy(camQuat);
-
-            // Set camera parameters
             const fovy = demo.model.cam_fovy[cameraId];
-            mjCamera.fov = fovy;
-            mjCamera.aspect = width / height;
-            mjCamera.near = 0.01;
-            mjCamera.far = 100;
-            mjCamera.updateProjectionMatrix();
-
-            // Render from camera view
-            renderer.setRenderTarget(renderTarget);
-            renderer.render(demo.scene, mjCamera);
-
-            // Read pixels
-            const pixels = new Uint8Array(width * height * 4);
-            renderer.readRenderTargetPixels(renderTarget, 0, 0, width, height, pixels);
-
-            // Restore original render target
-            renderer.setRenderTarget(currentRenderTarget);
-
-            // Convert to base64 for display
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            const imageData = ctx.createImageData(width, height);
-
-            // Flip Y axis (WebGL vs Canvas coordinate system)
-            for (let y = 0; y < height; y++) {
-                for (let x = 0; x < width; x++) {
-                    const srcIdx = ((height - y - 1) * width + x) * 4;
-                    const dstIdx = (y * width + x) * 4;
-                    imageData.data[dstIdx] = pixels[srcIdx];
-                    imageData.data[dstIdx + 1] = pixels[srcIdx + 1];
-                    imageData.data[dstIdx + 2] = pixels[srcIdx + 2];
-                    imageData.data[dstIdx + 3] = pixels[srcIdx + 3];
-                }
+            
+            // Get camera position from simulation
+            let position = [0, 0, 0];
+            if (camBodyId >= 0) {
+                const idx = camBodyId * 3;
+                position = [
+                    demo.simulation.xpos[idx],
+                    demo.simulation.xpos[idx + 1],
+                    demo.simulation.xpos[idx + 2]
+                ];
             }
-
-            ctx.putImageData(imageData, 0, 0);
-
-            // Return as base64 data URL
-            return canvas.toDataURL('image/png');
+            
+            // Get camera offset
+            const offset = [
+                demo.model.cam_pos[cameraId * 3],
+                demo.model.cam_pos[cameraId * 3 + 1],
+                demo.model.cam_pos[cameraId * 3 + 2]
+            ];
+            
+            return {
+                id: cameraId,
+                name: camName,
+                bodyId: camBodyId,
+                fov: fovy,
+                position: position,
+                offset: offset
+            };
         };
-
-        // Add sensor data access
+        
+        // Simplified sensor data with proper checks
         window.getSensorData = () => {
-            if (!demo.simulation) return [];
-            return Array.from(demo.simulation.sensordata || []);
+            if (!demo.simulation || !demo.simulation.sensordata) return [];
+            return Array.from(demo.simulation.sensordata);
         };
 
         window.getNumSensors = () => {
@@ -324,45 +279,6 @@ def get_camera_names():
     """Get list of camera names"""
     return window.getCameraNames().to_py()
 
-def get_camera_image(camera_id=0):
-    """Get image from camera sensor"""
-    img_data = window.renderCamera(camera_id)
-    if img_data:
-        return img_data
-    return None
-
-def save_camera_image(filename="camera_view.png", camera_id=0):
-    """Save camera view to file"""
-    img_data = get_camera_image(camera_id)
-    if img_data:
-        # Remove data URL prefix
-        img_data = img_data.split(',')[1]
-        # Decode base64
-        img_bytes = base64.b64decode(img_data)
-        # Save to file (in virtual filesystem)
-        with open(filename, 'wb') as f:
-            f.write(img_bytes)
-        print(f"Camera image saved to {filename}")
-        return True
-    return False
-
-def show_camera_view(camera_id=0):
-    """Display camera view in a popup window"""
-    img_data = get_camera_image(camera_id)
-    if img_data:
-        # Create HTML with image
-        html = f'''
-        <html>
-        <body style="margin:0; padding:0;">
-            <img src="{img_data}" style="width:100%; height:auto;">
-        </body>
-        </html>
-        '''
-        # Open in new window
-        window.open().document.write(html)
-        return True
-    return False
-
 # Sensor functions
 def get_sensor_data():
     """Get all sensor readings"""
@@ -395,8 +311,66 @@ def print_sensors():
         for i, name in enumerate(cam_names):
             print(f"  [{i}] {name}")
 
+def camera_status():
+    """Check camera status and availability"""
+    n_cams = get_num_cameras()
+    if n_cams > 0:
+        print(f"✓ {n_cams} camera(s) available")
+        names = get_camera_names()
+        for i, name in enumerate(names):
+            print(f"  [{i}] {name}")
+        print("\\nCamera viewer is visible in top-left corner")
+    else:
+        print("✗ No cameras in this model")
+        print("  Camera viewer is hidden")
+    return n_cams
+
+def get_camera_info(camera_id=0):
+    """Get camera information"""
+    info = window.getCameraInfo(camera_id)
+    if info:
+        return info.to_py()
+    return None
+
+def print_cameras():
+    """Print all camera information"""
+    n_cams = get_num_cameras()
+    print(f"\\nCameras: {n_cams}")
+    
+    if n_cams > 0:
+        cam_names = get_camera_names()
+        for i in range(n_cams):
+            info = get_camera_info(i)
+            if info:
+                print(f"  [{i}] {info['name']:20s}")
+                print(f"      Body ID: {info['bodyId']}")
+                print(f"      FOV: {info['fov']:.1f}°")
+                print(f"      Position: {info['position']}")
+                print(f"      Offset: {info['offset']}")
+
+def get_sensor_data():
+    """Get all sensor readings"""
+    data = window.getSensorData()
+    if data:
+        return data.to_py()
+    return []
+
+def print_sensors():
+    """Print all available sensors"""
+    n_sensors = get_num_sensors()
+    print(f"\\nSensors: {n_sensors}")
+    
+    if n_sensors > 0:
+        names = get_sensor_names()
+        data = get_sensor_data()
+        for i in range(min(n_sensors, len(names))):
+            value = data[i] if i < len(data) else 0
+            print(f"  [{i}] {names[i]:20s} = {value:.4f}")
+    
+    print_cameras()
+
 print("=" * 50)
-print("MuJoCo Python Control Interface")
+print("RoboSpace Python Control Interface")
 print("=" * 50)
 print("Available functions:")
 print("  get_num_actuators()  - Get number of actuators")
@@ -414,12 +388,11 @@ print("")
 print("\\nAdditional sensor functions:")
 print("  get_num_cameras()    - Get number of cameras")
 print("  get_camera_names()   - Get camera names")
-print("  get_camera_image()   - Get camera image as base64")
-print("  show_camera_view()   - Display camera in popup")
 print("  get_sensor_data()    - Get sensor readings")
 print("  print_sensors()      - Print all sensors")
 print("⚠️  Make sure simulation is NOT PAUSED to see movement!")
 print("=" * 50)
+camera_status()
         `);
 
         console.log("Python environment initialized");
