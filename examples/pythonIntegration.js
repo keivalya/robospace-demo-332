@@ -1,18 +1,20 @@
-// File: examples/pythonIntegration.js
+// pythonIntegration.js
+import * as THREE from 'three';
+import { getPosition, getQuaternion } from './mujocoUtils.js';
 
 export async function initializePythonEnvironment(demo) {
     if (!window.pyodide) return;
-    
+
     try {
         // Load required packages first
         await window.pyodide.loadPackage(["numpy"]);
         console.log("NumPy loaded successfully");
-        
+
         // Setup JavaScript bridge functions
         window.getMujocoModel = () => demo.model;
         window.getMujocoSimulation = () => demo.simulation;
         window.getMujocoState = () => demo.state;
-        
+
         window.setControl = (ctrlArray) => {
             if (!demo.simulation) return;
             const ctrl = Array.isArray(ctrlArray) ? ctrlArray : JSON.parse(ctrlArray);
@@ -20,28 +22,28 @@ export async function initializePythonEnvironment(demo) {
                 demo.simulation.ctrl[i] = ctrl[i];
             }
         };
-        
+
         window.getControl = () => {
             if (!demo.simulation) return [];
             return Array.from(demo.simulation.ctrl);
         };
-        
+
         window.resetSimulation = () => {
             if (!demo.simulation) return;
             demo.simulation.resetData();
             demo.simulation.forward();
         };
-        
+
         window.stepSimulation = () => {
             if (!demo.simulation) return;
             demo.simulation.step();
         };
-        
+
         window.getNumActuators = () => {
             if (!demo.model) return 0;
             return demo.model.nu;
         };
-        
+
         window.getActuatorRanges = () => {
             if (!demo.model) return [];
             const ranges = [];
@@ -58,34 +60,34 @@ export async function initializePythonEnvironment(demo) {
             }
             return ranges;
         };
-        
+
         window.getActuatorNames = () => {
             if (!demo.model) return [];
             const names = [];
             const textDecoder = new TextDecoder("utf-8");
             const nameStr = textDecoder.decode(demo.model.names).split('\0');
-            
+
             for (let i = 0; i < demo.model.nu; i++) {
                 const nameIndex = demo.model.name_actuatoradr[i];
                 names.push(nameStr[nameIndex] || `actuator_${i}`);
             }
             return names;
         };
-        
+
         window.getSimTime = () => {
             return demo.mujoco_time / 1000.0;
         };
-        
+
         window.getQpos = () => {
             if (!demo.simulation) return [];
             return Array.from(demo.simulation.qpos);
         };
-        
+
         window.getQvel = () => {
             if (!demo.simulation) return [];
             return Array.from(demo.simulation.qvel);
         };
-        
+
         // Setup Python output to go to the OUTPUT panel
         window.pythonOutput = (text) => {
             const outputArea = document.getElementById('python-output');
@@ -100,7 +102,137 @@ export async function initializePythonEnvironment(demo) {
                 outputArea.scrollTop = outputArea.scrollHeight;
             }
         };
-        
+        // Add these window functions in initializePythonEnvironment()
+
+        window.getCameraNames = () => {
+            if (!demo.model) return [];
+            const names = [];
+            const textDecoder = new TextDecoder("utf-8");
+            const nameStr = textDecoder.decode(demo.model.names).split('\0');
+
+            // Get camera names from the model
+            for (let i = 0; i < demo.model.ncam; i++) {
+                const nameIndex = demo.model.name_camadr[i];
+                names.push(nameStr[nameIndex] || `camera_${i}`);
+            }
+            return names;
+        };
+
+        window.getNumCameras = () => {
+            if (!demo.model) return 0;
+            return demo.model.ncam;
+        };
+
+        window.renderCamera = (cameraId) => {
+            if (!demo.model || !demo.simulation) return null;
+            if (cameraId >= demo.model.ncam) return null;
+
+            // Create offscreen renderer for camera view
+            const width = 640;  // Camera resolution
+            const height = 480;
+
+            // Create render target
+            const renderTarget = new THREE.WebGLRenderTarget(width, height);
+            const renderer = demo.renderer;
+
+            // Save current render target
+            const currentRenderTarget = renderer.getRenderTarget();
+
+            // Create camera from MuJoCo camera parameters
+            const mjCamera = new THREE.PerspectiveCamera();
+
+            // Get MuJoCo camera position and orientation
+            const camPos = new THREE.Vector3();
+            const camQuat = new THREE.Quaternion();
+
+            // Camera body ID
+            const camBodyId = demo.model.cam_bodyid[cameraId];
+
+            // Get camera position from body
+            if (camBodyId >= 0) {
+                getPosition(demo.simulation.xpos, camBodyId, camPos);
+                getQuaternion(demo.simulation.xquat, camBodyId, camQuat);
+
+                // Apply camera offset
+                const camPosOffset = new THREE.Vector3(
+                    demo.model.cam_pos[cameraId * 3],
+                    demo.model.cam_pos[cameraId * 3 + 2],
+                    -demo.model.cam_pos[cameraId * 3 + 1]
+                );
+                camPos.add(camPosOffset);
+            }
+
+            mjCamera.position.copy(camPos);
+            mjCamera.quaternion.copy(camQuat);
+
+            // Set camera parameters
+            const fovy = demo.model.cam_fovy[cameraId];
+            mjCamera.fov = fovy;
+            mjCamera.aspect = width / height;
+            mjCamera.near = 0.01;
+            mjCamera.far = 100;
+            mjCamera.updateProjectionMatrix();
+
+            // Render from camera view
+            renderer.setRenderTarget(renderTarget);
+            renderer.render(demo.scene, mjCamera);
+
+            // Read pixels
+            const pixels = new Uint8Array(width * height * 4);
+            renderer.readRenderTargetPixels(renderTarget, 0, 0, width, height, pixels);
+
+            // Restore original render target
+            renderer.setRenderTarget(currentRenderTarget);
+
+            // Convert to base64 for display
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(width, height);
+
+            // Flip Y axis (WebGL vs Canvas coordinate system)
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const srcIdx = ((height - y - 1) * width + x) * 4;
+                    const dstIdx = (y * width + x) * 4;
+                    imageData.data[dstIdx] = pixels[srcIdx];
+                    imageData.data[dstIdx + 1] = pixels[srcIdx + 1];
+                    imageData.data[dstIdx + 2] = pixels[srcIdx + 2];
+                    imageData.data[dstIdx + 3] = pixels[srcIdx + 3];
+                }
+            }
+
+            ctx.putImageData(imageData, 0, 0);
+
+            // Return as base64 data URL
+            return canvas.toDataURL('image/png');
+        };
+
+        // Add sensor data access
+        window.getSensorData = () => {
+            if (!demo.simulation) return [];
+            return Array.from(demo.simulation.sensordata || []);
+        };
+
+        window.getNumSensors = () => {
+            if (!demo.model) return 0;
+            return demo.model.nsensor;
+        };
+
+        window.getSensorNames = () => {
+            if (!demo.model) return [];
+            const names = [];
+            const textDecoder = new TextDecoder("utf-8");
+            const nameStr = textDecoder.decode(demo.model.names).split('\0');
+
+            for (let i = 0; i < demo.model.nsensor; i++) {
+                const nameIndex = demo.model.name_sensoradr[i];
+                names.push(nameStr[nameIndex] || `sensor_${i}`);
+            }
+            return names;
+        };
+
         // Initialize Python environment with helper functions
         await window.pyodide.runPythonAsync(`
 import numpy as np
@@ -109,6 +241,8 @@ import json
 import math
 import sys
 import io
+import base64
+from io import BytesIO
 
 # Redirect stdout and stderr to the OUTPUT panel
 class OutputRedirector:
@@ -181,6 +315,86 @@ def print_info():
         r = ranges[i] if i < len(ranges) else (-1, 1)
         print(f"  [{i:2d}] {name:20s} | Range: [{r[0]:6.2f}, {r[1]:6.2f}]")
 
+# Camera functions
+def get_num_cameras():
+    """Get number of cameras in the model"""
+    return window.getNumCameras()
+
+def get_camera_names():
+    """Get list of camera names"""
+    return window.getCameraNames().to_py()
+
+def get_camera_image(camera_id=0):
+    """Get image from camera sensor"""
+    img_data = window.renderCamera(camera_id)
+    if img_data:
+        return img_data
+    return None
+
+def save_camera_image(filename="camera_view.png", camera_id=0):
+    """Save camera view to file"""
+    img_data = get_camera_image(camera_id)
+    if img_data:
+        # Remove data URL prefix
+        img_data = img_data.split(',')[1]
+        # Decode base64
+        img_bytes = base64.b64decode(img_data)
+        # Save to file (in virtual filesystem)
+        with open(filename, 'wb') as f:
+            f.write(img_bytes)
+        print(f"Camera image saved to {filename}")
+        return True
+    return False
+
+def show_camera_view(camera_id=0):
+    """Display camera view in a popup window"""
+    img_data = get_camera_image(camera_id)
+    if img_data:
+        # Create HTML with image
+        html = f'''
+        <html>
+        <body style="margin:0; padding:0;">
+            <img src="{img_data}" style="width:100%; height:auto;">
+        </body>
+        </html>
+        '''
+        # Open in new window
+        window.open().document.write(html)
+        return True
+    return False
+
+# Sensor functions
+def get_sensor_data():
+    """Get all sensor readings"""
+    return window.getSensorData().to_py()
+
+def get_num_sensors():
+    """Get number of sensors"""
+    return window.getNumSensors()
+
+def get_sensor_names():
+    """Get sensor names"""
+    return window.getSensorNames().to_py()
+
+def print_sensors():
+    """Print all available sensors"""
+    n_sensors = get_num_sensors()
+    n_cameras = get_num_cameras()
+    
+    print(f"\\nSensors: {n_sensors}")
+    if n_sensors > 0:
+        names = get_sensor_names()
+        data = get_sensor_data()
+        for i in range(min(n_sensors, len(names))):
+            value = data[i] if i < len(data) else 0
+            print(f"  [{i}] {names[i]:20s} = {value:.4f}")
+    
+    print(f"\\nCameras: {n_cameras}")
+    if n_cameras > 0:
+        cam_names = get_camera_names()
+        for i, name in enumerate(cam_names):
+            print(f"  [{i}] {name}")
+
 print("=" * 50)
 print("MuJoCo Python Control Interface")
 print("=" * 50)
@@ -197,12 +411,19 @@ print("  reset()              - Reset simulation")
 print("  step()               - Step simulation")
 print("  print_info()         - Print system info")
 print("")
+print("\\nAdditional sensor functions:")
+print("  get_num_cameras()    - Get number of cameras")
+print("  get_camera_names()   - Get camera names")
+print("  get_camera_image()   - Get camera image as base64")
+print("  show_camera_view()   - Display camera in popup")
+print("  get_sensor_data()    - Get sensor readings")
+print("  print_sensors()      - Print all sensors")
 print("⚠️  Make sure simulation is NOT PAUSED to see movement!")
 print("=" * 50)
         `);
-        
+
         console.log("Python environment initialized");
-        
+
     } catch (error) {
         console.error('Error initializing Python environment:', error);
     }
@@ -210,7 +431,7 @@ print("=" * 50)
 
 export async function updatePythonEnvironment(demo) {
     if (!window.pyodide) return;
-    
+
     try {
         await window.pyodide.runPythonAsync(`
 # Update with new model
@@ -231,7 +452,7 @@ export function setupPythonIDE(demo) {
     const outputArea = document.getElementById('python-output');
     const ideContainer = document.getElementById('python-ide');
     const editorContainer = document.getElementById('python-editor-container');
-    
+
     // Set initial example code
     codeArea.value = `import numpy as np
 import math
@@ -262,27 +483,27 @@ for i in range(n_actuators):
 set_control(control)
 print(f"\\nApplied control at t={t:.2f}s")
 print(f"First 3 values: {control[:3]}")`;
-    
+
     // Toggle IDE
     toggleButton.addEventListener('click', () => {
         ideContainer.classList.toggle('collapsed');
         const isCollapsed = ideContainer.classList.contains('collapsed');
         toggleButton.textContent = isCollapsed ? '⌃' : '⌄';
         editorContainer.classList.toggle('hidden', isCollapsed);
-        
+
         // Adjust appbody height
         const appbody = document.getElementById('appbody');
         appbody.style.bottom = isCollapsed ? '40px' : '250px';
-        
+
         // Properly resize the renderer
         setTimeout(() => demo.onWindowResize(), 10); // Small delay for CSS transition
     });
-    
+
     // Clear output
     clearButton.addEventListener('click', () => {
         outputArea.innerHTML = '<div class="output-label">OUTPUT</div>';
     });
-    
+
     // Add example selector handler
     const exampleSelector = document.getElementById('example-selector');
     if (exampleSelector) {
@@ -293,24 +514,24 @@ print(f"First 3 values: {control[:3]}")`;
             }
         });
     }
-    
+
     // Run Python code
     runButton.addEventListener('click', async () => {
         if (!window.pyodide) {
             window.pythonOutput("Pyodide not loaded yet. Please wait...");
             return;
         }
-        
+
         const code = codeArea.value;
         if (!code.trim()) return;
-        
+
         outputArea.innerHTML = '<div class="output-label">OUTPUT</div>';
         window.pythonOutput("Running...\n");
-        
+
         try {
             // Load packages that might be imported in the code
             await window.pyodide.loadPackagesFromImports(code);
-            
+
             // Run the code
             await window.pyodide.runPythonAsync(code);
             window.pythonOutput("\n✓ Execution completed");
@@ -320,12 +541,12 @@ print(f"First 3 values: {control[:3]}")`;
             window.pythonOutput(`\n✗ Error: ${errorMsg}`);
         }
     });
-    
+
     // Stop button (placeholder for now)
     stopButton.addEventListener('click', () => {
         window.pythonOutput("\n■ Stopped");
     });
-    
+
     // Keyboard shortcut
     codeArea.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
