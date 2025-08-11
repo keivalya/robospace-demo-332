@@ -427,9 +427,7 @@ export function setupPythonIDE(demo) {
     const editorContainer = document.getElementById('python-editor-container');
 
     // Set initial example code
-    codeArea.value = `import numpy as np
-import math
-
+    codeArea.value = `
 # Get system information
 n_actuators = get_num_actuators()
 print(f"Number of actuators: {n_actuators}")
@@ -437,25 +435,9 @@ print(f"Number of actuators: {n_actuators}")
 # Print actuator details
 names = get_actuator_names()
 ranges = get_actuator_ranges()
-for i in range(min(5, n_actuators)):  # Show first 5
-    print(f"  {i}: {names[i]:15s} [{ranges[i][0]:.2f}, {ranges[i][1]:.2f}]")
-
-# Create sine wave control
-t = get_time()
-control = []
 for i in range(n_actuators):
-    # Sine wave with different phase for each joint
-    value = 0.3 * math.sin(2 * math.pi * 0.5 * t + i * 0.5)
-    # Clamp to range
-    if i < len(ranges):
-        min_val, max_val = ranges[i]
-        value = max(min_val, min(max_val, value))
-    control.append(value)
-
-# Apply control
-set_control(control)
-print(f"\\nApplied control at t={t:.2f}s")
-print(f"First 3 values: {control[:3]}")`;
+    print(f"  {i}: {names[i]:15s} [{ranges[i][0]:.2f}, {ranges[i][1]:.2f}]")
+`;
 
     // Toggle IDE
     toggleButton.addEventListener('click', () => {
