@@ -418,3 +418,125 @@ body {
 #error:not(:empty) {
     display: block;
 }
+
+/* Camera Viewer Styles */
+.camera-viewer {
+    position: absolute;
+    top: 70px;
+    left: 10px;
+    width: 340px;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    transition: all 0.3s ease;
+    overflow: hidden;
+}
+
+.camera-viewer.collapsed {
+    width: 180px;
+}
+
+.camera-viewer.collapsed .camera-content {
+    display: none;
+}
+
+.camera-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: linear-gradient(to bottom, #2a2a2a, #222);
+    border-bottom: 1px solid #444;
+    cursor: move;
+    user-select: none;
+}
+
+.camera-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.camera-icon {
+    font-size: 16px;
+}
+
+.camera-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.camera-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.camera-select {
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    min-width: 100px;
+}
+
+.camera-viewer.collapsed .camera-select {
+    display: none;
+}
+
+.camera-toggle {
+    background: transparent;
+    color: #aaa;
+    border: none;
+    padding: 2px 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: color 0.2s;
+}
+
+.camera-toggle:hover {
+    color: #fff;
+}
+
+.camera-content {
+    padding: 10px;
+    background: #0d0d0d;
+}
+
+#camera-canvas {
+    width: 100%;
+    height: auto;
+    background: #000;
+    border: 1px solid #333;
+    border-radius: 4px;
+    display: block;
+}
+
+.camera-info {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 8px;
+    padding: 4px 8px;
+    background: #1a1a1a;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #888;
+}
+
+.camera-info span {
+    font-family: monospace;
+}
+
+/* Make camera viewer draggable */
+.camera-viewer.dragging {
+    opacity: 0.9;
+}

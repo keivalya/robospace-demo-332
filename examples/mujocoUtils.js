@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Reflector  } from './utils/Reflector.js';
-import { MuJoCoDemo } from './main.js';
+import { RoboSpaceDemo } from './main.js';
 
 export async function reloadFunc() {
   // Delete the old scene and load the new scene
@@ -13,7 +13,7 @@ export async function reloadFunc() {
   }
 }
 
-/** @param {MuJoCoDemo} parentContext*/
+/** @param {RoboSpaceDemo} parentContext*/
 export function setupGUI(parentContext) {
 
   // Make sure we reset the camera when the scene is changed or reloaded.
@@ -264,7 +264,7 @@ export function setupGUI(parentContext) {
 /** Loads a scene for MuJoCo
  * @param {mujoco} mujoco This is a reference to the mujoco namespace object
  * @param {string} filename This is the name of the .xml file in the /working/ directory of the MuJoCo/Emscripten Virtual File System
- * @param {MuJoCoDemo} parent The three.js Scene Object to add the MuJoCo model elements to
+ * @param {RoboSpaceDemo} parent The three.js Scene Object to add the MuJoCo model elements to
  */
 export async function loadSceneFromURL(mujoco, filename, parent) {
     // Free the old simulation.
@@ -557,65 +557,22 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
  * @param {mujoco} mujoco */
 export async function downloadExampleScenesFolder(mujoco) {
   let allFiles = [
-    "boston_dynamics_spot/assets/arm_link_el0.obj",
-    "boston_dynamics_spot/assets/arm_link_el0_coll.obj",
-    "boston_dynamics_spot/assets/arm_link_el1_0.obj",
-    "boston_dynamics_spot/assets/arm_link_el1_1.obj",
-    "boston_dynamics_spot/assets/arm_link_el1_lip.obj",
-    "boston_dynamics_spot/assets/arm_link_el1_main.obj",
-    "boston_dynamics_spot/assets/arm_link_fngr_0.obj",
-    "boston_dynamics_spot/assets/arm_link_fngr_1.obj",
-    "boston_dynamics_spot/assets/arm_link_hr0.obj",
-    "boston_dynamics_spot/assets/arm_link_hr0_coll.obj",
-    "boston_dynamics_spot/assets/arm_link_sh0.obj",
-    "boston_dynamics_spot/assets/arm_link_sh0_base.obj",
-    "boston_dynamics_spot/assets/arm_link_sh0_left_motor.obj",
-    "boston_dynamics_spot/assets/arm_link_sh0_right_motor.obj",
-    "boston_dynamics_spot/assets/arm_link_sh1_0.obj",
-    "boston_dynamics_spot/assets/arm_link_sh1_1.obj",
-    "boston_dynamics_spot/assets/arm_link_wr0.obj",
-    "boston_dynamics_spot/assets/arm_link_wr0_0.obj",
-    "boston_dynamics_spot/assets/arm_link_wr0_1.obj",
-    "boston_dynamics_spot/assets/arm_link_wr1.obj",
-    "boston_dynamics_spot/assets/arm_link_wr1_0.obj",
-    "boston_dynamics_spot/assets/arm_link_wr1_1.obj",
-    "boston_dynamics_spot/assets/body_0.obj",
-    "boston_dynamics_spot/assets/body_1.obj",
-    "boston_dynamics_spot/assets/body_collision.obj",
-    "boston_dynamics_spot/assets/front_jaw.obj",
-    "boston_dynamics_spot/assets/front_left_hip.obj",
-    "boston_dynamics_spot/assets/front_left_lower_leg.obj",
-    "boston_dynamics_spot/assets/front_left_upper_leg_0.obj",
-    "boston_dynamics_spot/assets/front_left_upper_leg_1.obj",
-    "boston_dynamics_spot/assets/front_right_hip.obj",
-    "boston_dynamics_spot/assets/front_right_lower_leg.obj",
-    "boston_dynamics_spot/assets/front_right_upper_leg_0.obj",
-    "boston_dynamics_spot/assets/front_right_upper_leg_1.obj",
-    "boston_dynamics_spot/assets/jaw_tooth.obj",
-    "boston_dynamics_spot/assets/left_finger.obj",
-    "boston_dynamics_spot/assets/left_hinge.obj",
-    "boston_dynamics_spot/assets/left_lower_leg_collision.obj",
-    "boston_dynamics_spot/assets/left_tooth.obj",
-    "boston_dynamics_spot/assets/left_upper_leg_collision.obj",
-    "boston_dynamics_spot/assets/middle_jaw.obj",
-    "boston_dynamics_spot/assets/rear_left_hip.obj",
-    "boston_dynamics_spot/assets/rear_left_lower_leg.obj",
-    "boston_dynamics_spot/assets/rear_left_upper_leg_0.obj",
-    "boston_dynamics_spot/assets/rear_left_upper_leg_1.obj",
-    "boston_dynamics_spot/assets/rear_right_hip.obj",
-    "boston_dynamics_spot/assets/rear_right_lower_leg.obj",
-    "boston_dynamics_spot/assets/rear_right_upper_leg_0.obj",
-    "boston_dynamics_spot/assets/rear_right_upper_leg_1.obj",
-    "boston_dynamics_spot/assets/right_finger.obj",
-    "boston_dynamics_spot/assets/right_hinge.obj",
-    "boston_dynamics_spot/assets/right_lower_leg_collision.obj",
-    "boston_dynamics_spot/assets/right_tooth.obj",
-    "boston_dynamics_spot/assets/right_upper_leg_collision.obj",
-    "boston_dynamics_spot/scene.xml",
-    "boston_dynamics_spot/scene_arm.xml",
-    "boston_dynamics_spot/spot.png",
-    "boston_dynamics_spot/spot.xml",
-    "boston_dynamics_spot/spot_arm.xml",
+    "berkeley_humanoid/assets/ll_faa.stl",
+    "berkeley_humanoid/assets/ll_ffe.stl",
+    "berkeley_humanoid/assets/ll_haa.stl",
+    "berkeley_humanoid/assets/ll_hfe.stl",
+    "berkeley_humanoid/assets/ll_hr.stl",
+    "berkeley_humanoid/assets/ll_kfe.stl",
+    "berkeley_humanoid/assets/lr_faa.stl",
+    "berkeley_humanoid/assets/lr_ffe.stl",
+    "berkeley_humanoid/assets/lr_haa.stl",
+    "berkeley_humanoid/assets/lr_hfe.stl",
+    "berkeley_humanoid/assets/lr_hr.stl",
+    "berkeley_humanoid/assets/lr_kfe.stl",
+    "berkeley_humanoid/assets/torso.stl",
+    "berkeley_humanoid/berkeley_humanoid.png",
+    "berkeley_humanoid/berkeley_humanoid.xml",
+    "berkeley_humanoid/scene.xml",
     "google_barkour_vb/assets/abduction.stl",
     "google_barkour_vb/assets/camera_cover.stl",
     "google_barkour_vb/assets/foot.stl",
@@ -634,30 +591,7 @@ export async function downloadExampleScenesFolder(mujoco) {
     "google_barkour_vb/scene.xml",
     "google_barkour_vb/scene_hfield_mjx.xml",
     "google_barkour_vb/scene_mjx.xml",
-    "unitree_h1/assets/left_ankle_link.stl",
-    "unitree_h1/assets/left_elbow_link.stl",
-    "unitree_h1/assets/left_hip_pitch_link.stl",
-    "unitree_h1/assets/left_hip_roll_link.stl",
-    "unitree_h1/assets/left_hip_yaw_link.stl",
-    "unitree_h1/assets/left_knee_link.stl",
-    "unitree_h1/assets/left_shoulder_pitch_link.stl",
-    "unitree_h1/assets/left_shoulder_roll_link.stl",
-    "unitree_h1/assets/left_shoulder_yaw_link.stl",
-    "unitree_h1/assets/logo_link.stl",
-    "unitree_h1/assets/pelvis.stl",
-    "unitree_h1/assets/right_ankle_link.stl",
-    "unitree_h1/assets/right_elbow_link.stl",
-    "unitree_h1/assets/right_hip_pitch_link.stl",
-    "unitree_h1/assets/right_hip_roll_link.stl",
-    "unitree_h1/assets/right_hip_yaw_link.stl",
-    "unitree_h1/assets/right_knee_link.stl",
-    "unitree_h1/assets/right_shoulder_pitch_link.stl",
-    "unitree_h1/assets/right_shoulder_roll_link.stl",
-    "unitree_h1/assets/right_shoulder_yaw_link.stl",
-    "unitree_h1/assets/torso_link.stl",
-    "unitree_h1/h1.png",
-    "unitree_h1/h1.xml",
-    "unitree_h1/scene.xml",
+    "scene.xml",
     "universal_robots_ur5e/assets/base_0.obj",
     "universal_robots_ur5e/assets/base_1.obj",
     "universal_robots_ur5e/assets/forearm_0.obj",
