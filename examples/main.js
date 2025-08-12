@@ -179,7 +179,7 @@ export class RoboSpaceDemo {
     this.simulation.forward();
 
     // Update robot info
-    this.updateRobotInfo();
+    // this.updateRobotInfo();
 
     // Update Python environment
     if (window.pyodide) {

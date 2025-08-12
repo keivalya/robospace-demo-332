@@ -263,7 +263,6 @@ def print_info():
     
     print(f"\\nSystem Information:")
     print(f"  Number of actuators: {n}")
-    print(f"  Simulation time: {get_time():.3f}s")
     print(f"\\nActuators:")
     for i in range(n):
         name = names[i] if i < len(names) else f"actuator_{i}"
@@ -369,31 +368,16 @@ def print_sensors():
     
     print_cameras()
 
-print("=" * 50)
-print("RoboSpace Python Control Interface")
-print("=" * 50)
-print("Available functions:")
+print("RoboSpace 🪐")
 print("  get_num_actuators()  - Get number of actuators")
 print("  get_actuator_names() - Get actuator names")
 print("  get_actuator_ranges()- Get control ranges")
 print("  set_control(ctrl)    - Set control values")
 print("  get_control()        - Get current control")
 print("  get_qpos()           - Get positions")
-print("  get_qvel()           - Get velocities")
-print("  get_time()           - Get simulation time")
 print("  reset()              - Reset simulation")
 print("  step()               - Step simulation")
-print("  print_info()         - Print system info")
-print("")
-print("\\nAdditional sensor functions:")
-print("  get_num_cameras()    - Get number of cameras")
-print("  get_camera_names()   - Get camera names")
-print("  get_sensor_data()    - Get sensor readings")
-print("  print_sensors()      - Print all sensors")
-print("⚠️  Make sure simulation is NOT PAUSED to see movement!")
-print("=" * 50)
-camera_status()
-        `);
+print("... and many more!")`);
 
         console.log("Python environment initialized");
 
@@ -418,7 +402,6 @@ print_info()
 
 export function setupPythonIDE(demo) {
     const runButton = document.getElementById('run-python');
-    const stopButton = document.getElementById('stop-python');
     const clearButton = document.getElementById('clear-python');
     const toggleButton = document.getElementById('toggle-ide');
     const codeArea = document.getElementById('python-code');
@@ -427,8 +410,7 @@ export function setupPythonIDE(demo) {
     const editorContainer = document.getElementById('python-editor-container');
 
     // Set initial example code
-    codeArea.value = `
-# Get system information
+    codeArea.value = `# Get system information
 n_actuators = get_num_actuators()
 print(f"Number of actuators: {n_actuators}")
 
@@ -436,7 +418,7 @@ print(f"Number of actuators: {n_actuators}")
 names = get_actuator_names()
 ranges = get_actuator_ranges()
 for i in range(n_actuators):
-    print(f"  {i}: {names[i]:15s} [{ranges[i][0]:.2f}, {ranges[i][1]:.2f}]")
+    print(f"  {i}: {names[i]} \t [{ranges[i][0]:.2f}, {ranges[i][1]:.2f}]")
 `;
 
     // Toggle IDE
@@ -495,11 +477,6 @@ for i in range(n_actuators):
             const errorMsg = error.message.split('\n').slice(-1)[0] || error.message;
             window.pythonOutput(`\n✗ Error: ${errorMsg}`);
         }
-    });
-
-    // Stop button (placeholder for now)
-    stopButton.addEventListener('click', () => {
-        window.pythonOutput("\n■ Stopped");
     });
 
     // Keyboard shortcut

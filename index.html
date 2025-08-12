@@ -68,42 +68,19 @@
     <div id="python-ide">
         <div class="ide-header">
             <div class="ide-title">
-                <span>🐍 Python Controller</span>
+                <span>Simulation Controller</span>
                 <span style="color: #888; font-size: 12px;">Control robot actuation with Python</span>
             </div>
             <div class="ide-controls">
                 <button id="run-python" class="ide-button">▶ Run</button>
-                <button id="stop-python" class="ide-button">■ Stop</button>
                 <button id="clear-python" class="ide-button clear">Clear</button>
-                <button id="toggle-ide" class="ide-button toggle">⌃</button>
+                <button id="toggle-ide" class="ide-button toggle">⌄</button>
             </div>
         </div>
         <div id="python-editor-container">
             <textarea id="python-code" placeholder="# Enter Python code here to control the robot"></textarea>
             <div id="python-output">
                 <div class="output-label">OUTPUT</div>
-            </div>
-        </div>
-    </div>
-    <!-- Camera Viewer Window -->
-    <div id="camera-viewer" class="camera-viewer collapsed" style="display: none;">
-        <div class="camera-header">
-            <span class="camera-title">
-                <span class="camera-icon">📷</span>
-                <span class="camera-name">Camera View</span>
-            </span>
-            <div class="camera-controls">
-                <select id="camera-selector" class="camera-select">
-                    <!-- Options will be populated dynamically -->
-                </select>
-                <button id="toggle-camera" class="camera-toggle">◀</button>
-            </div>
-        </div>
-        <div class="camera-content">
-            <canvas id="camera-canvas" width="320" height="240"></canvas>
-            <div class="camera-info">
-                <span id="camera-fps">FPS: 0</span>
-                <span id="camera-resolution">320x240</span>
             </div>
         </div>
     </div>
