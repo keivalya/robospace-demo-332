@@ -111,7 +111,7 @@ export class RoboSpaceDemo {
     const pauseButton = document.getElementById('pause-button');
     pauseButton.addEventListener('click', () => {
       this.params.paused = !this.params.paused;
-      pauseButton.textContent = this.params.paused ? '▶ Play' : '⏸ Pause';
+      pauseButton.textContent = this.params.paused ? '▶' : '⏸';
       pauseButton.classList.toggle('active', this.params.paused);
     });
 
