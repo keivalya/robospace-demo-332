@@ -557,6 +557,23 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
  * @param {mujoco} mujoco */
 export async function downloadExampleScenesFolder(mujoco) {
   let allFiles = [
+    "SO101/assets/base_motor_holder_so101_v1.stl",
+    "SO101/assets/base_so101_v2.stl",
+    "SO101/assets/motor_holder_so101_base_v1.stl",
+    "SO101/assets/motor_holder_so101_wrist_v1.stl",
+    "SO101/assets/moving_jaw_so101_v1.stl",
+    "SO101/assets/rotation_pitch_so101_v1.stl",
+    "SO101/assets/sts3215_03a_no_horn_v1.stl",
+    "SO101/assets/sts3215_03a_v1.stl",
+    "SO101/assets/under_arm_so101_v1.stl",
+    "SO101/assets/upper_arm_so101_v1.stl",
+    "SO101/assets/waveshare_mounting_plate_so101_v2.stl",
+    "SO101/assets/wrist_roll_follower_so101_v1.stl",
+    "SO101/assets/wrist_roll_pitch_so101_v2.stl",
+    "SO101/joints_properties.xml",
+    "SO101/scene.xml",
+    "SO101/so101_new_calib.xml",
+    "SO101/so101_old_calib.xml",
     "berkeley_humanoid/assets/ll_faa.stl",
     "berkeley_humanoid/assets/ll_ffe.stl",
     "berkeley_humanoid/assets/ll_haa.stl",

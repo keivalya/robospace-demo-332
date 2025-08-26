@@ -90,6 +90,7 @@ export class RoboSpaceDemo {
       "Universal Robots UR5e": "universal_robots_ur5e/scene.xml",
       "Google Barkour VB": "google_barkour_vb/scene.xml",
       "Berkeley Humanoid": "berkeley_humanoid/scene.xml",
+      "SO101": "SO101/scene.xml",
       "Default": "scene.xml",
     };
 
