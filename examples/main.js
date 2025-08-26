@@ -1,4 +1,4 @@
-
+// main.js
 import * as THREE from 'three';
 import { GUI } from '../node_modules/three/examples/jsm/libs/lil-gui.module.min.js';
 import { OrbitControls } from '../node_modules/three/examples/jsm/controls/OrbitControls.js';

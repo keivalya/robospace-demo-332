@@ -44,6 +44,22 @@ export async function initializePythonEnvironment(demo) {
             return demo.model.nu;
         };
 
+        window.getActuatorNames = () => {
+            if (!demo.model) return [];
+            const names = [];
+            const textDecoder = new TextDecoder("utf-8");
+            const nullChar = textDecoder.decode(new ArrayBuffer(1));
+            
+            for (let i = 0; i < demo.model.nu; i++) {
+                const nameAddress = demo.model.name_actuatoradr[i];
+                const nameBytes = demo.model.names.subarray(nameAddress);
+                const decodedString = textDecoder.decode(nameBytes);
+                const name = decodedString.split(nullChar)[0];
+                names.push(name || `actuator_${i}`);
+            }
+            return names;
+        };
+
         window.getActuatorRanges = () => {
             if (!demo.model) return [];
             const ranges = [];
@@ -59,19 +75,6 @@ export async function initializePythonEnvironment(demo) {
                 }
             }
             return ranges;
-        };
-
-        window.getActuatorNames = () => {
-            if (!demo.model) return [];
-            const names = [];
-            const textDecoder = new TextDecoder("utf-8");
-            const nameStr = textDecoder.decode(demo.model.names).split('\0');
-
-            for (let i = 0; i < demo.model.nu; i++) {
-                const nameIndex = demo.model.name_actuatoradr[i];
-                names.push(nameStr[nameIndex] || `actuator_${i}`);
-            }
-            return names;
         };
 
         window.getSimTime = () => {

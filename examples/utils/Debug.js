@@ -1,3 +1,4 @@
+// Debug.js
 /** This class provides Debug Utilities. */
 class Debug {
 
