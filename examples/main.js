@@ -5,6 +5,7 @@ import { OrbitControls } from '../node_modules/three/examples/jsm/controls/Orbit
 import { DragStateManager } from './utils/DragStateManager.js';
 import { setupGUI, downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
 import load_mujoco from '../dist/mujoco_wasm.js';
+import { RobotSerialConnection } from './serialConnection.js';
 
 const loadPyodide = window.loadPyodide;
 // Load the MuJoCo Module
@@ -81,6 +82,36 @@ export class RoboSpaceDemo {
     // Initialize the Drag State Manager.
     this.dragStateManager = new DragStateManager(this.scene, this.renderer, this.camera, this.container.parentElement, this.controls);
     this.onWindowResize();
+
+    this.robotConnection = new RobotSerialConnection();
+    this.robotSyncEnabled = false;
+    this.setupRobotConnection();
+  }
+
+  setupRobotConnection() {
+    const connectButton = document.getElementById('connect-robot-button');
+    const statusLabel = document.getElementById('connection-status');
+    
+    connectButton.addEventListener('click', async () => {
+      if (!this.robotConnection.isConnected) {
+        const success = await this.robotConnection.connect();
+        if (success) {
+          statusLabel.textContent = 'Connected';
+          statusLabel.style.color = '#0f0';
+          connectButton.textContent = '🔌 Disconnect Robot';
+          this.robotSyncEnabled = true;
+        } else {
+          statusLabel.textContent = 'Failed';
+          statusLabel.style.color = '#f00';
+        }
+      } else {
+        await this.robotConnection.disconnect();
+        statusLabel.textContent = 'Disconnected';
+        statusLabel.style.color = '#fff';
+        connectButton.textContent = '🔌 Connect Robot';
+        this.robotSyncEnabled = false;
+      }
+    });
   }
 
   setupToolbar() {
@@ -327,6 +358,20 @@ export class RoboSpaceDemo {
         }
 
         this.simulation.step();
+
+        if (this.robotSyncEnabled && this.robotConnection.isConnected) {
+          // Get joint positions from simulation
+          const jointPositions = [];
+          for (let i = 0; i < this.model.nu; i++) {
+            // Get joint position from qpos array
+            if (i < this.simulation.qpos.length) {
+              jointPositions.push(this.simulation.qpos[i]);
+            }
+          }
+          
+          // Send to physical robot
+          this.robotConnection.sendJointPositions(jointPositions);
+        }
 
         this.mujoco_time += timestep * 1000.0;
       }

@@ -49,7 +49,7 @@ export async function initializePythonEnvironment(demo) {
             const names = [];
             const textDecoder = new TextDecoder("utf-8");
             const nullChar = textDecoder.decode(new ArrayBuffer(1));
-            
+
             for (let i = 0; i < demo.model.nu; i++) {
                 const nameAddress = demo.model.name_actuatoradr[i];
                 const nameBytes = demo.model.names.subarray(nameAddress);
@@ -129,16 +129,16 @@ export async function initializePythonEnvironment(demo) {
         window.getCameraInfo = (cameraId) => {
             if (!demo.model || !demo.simulation) return null;
             if (cameraId >= demo.model.ncam) return null;
-            
+
             const textDecoder = new TextDecoder("utf-8");
             const names = textDecoder.decode(demo.model.names).split('\0');
             const nameIndex = demo.model.name_camadr[cameraId];
             const camName = names[nameIndex] || `camera_${cameraId}`;
-            
+
             // Get camera parameters
             const camBodyId = demo.model.cam_bodyid[cameraId];
             const fovy = demo.model.cam_fovy[cameraId];
-            
+
             // Get camera position from simulation
             let position = [0, 0, 0];
             if (camBodyId >= 0) {
@@ -149,14 +149,14 @@ export async function initializePythonEnvironment(demo) {
                     demo.simulation.xpos[idx + 2]
                 ];
             }
-            
+
             // Get camera offset
             const offset = [
                 demo.model.cam_pos[cameraId * 3],
                 demo.model.cam_pos[cameraId * 3 + 1],
                 demo.model.cam_pos[cameraId * 3 + 2]
             ];
-            
+
             return {
                 id: cameraId,
                 name: camName,
@@ -166,7 +166,7 @@ export async function initializePythonEnvironment(demo) {
                 offset: offset
             };
         };
-        
+
         // Simplified sensor data with proper checks
         window.getSensorData = () => {
             if (!demo.simulation || !demo.simulation.sensordata) return [];
@@ -189,6 +189,24 @@ export async function initializePythonEnvironment(demo) {
                 names.push(nameStr[nameIndex] || `sensor_${i}`);
             }
             return names;
+        };
+
+        // Physical robot connection functions
+        window.connectRobot = async () => {
+            if (demo.robotConnection) {
+                return await demo.robotConnection.connect();
+            }
+            return false;
+        };
+
+        window.disconnectRobot = async () => {
+            if (demo.robotConnection) {
+                await demo.robotConnection.disconnect();
+            }
+        };
+
+        window.setRobotSync = (enabled) => {
+            demo.robotSyncEnabled = enabled;
         };
 
         // Initialize Python environment with helper functions
@@ -370,6 +388,19 @@ def print_sensors():
             print(f"  [{i}] {names[i]:20s} = {value:.4f}")
     
     print_cameras()
+
+# Robot connection functions
+def connect_robot():
+    """Connect to physical robot via serial"""
+    return window.connectRobot()
+
+def disconnect_robot():
+    """Disconnect from physical robot"""
+    window.disconnectRobot()
+
+def enable_robot_sync(enabled=True):
+    """Enable/disable position synchronization"""
+    window.setRobotSync(enabled)
 
 print("RoboSpace 🪐")
 print("  get_num_actuators()  - Get number of actuators")

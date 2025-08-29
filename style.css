@@ -540,3 +540,10 @@ body {
 .camera-viewer.dragging {
     opacity: 0.9;
 }
+
+#connection-status {
+    font-weight: 600;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.3);
+}
