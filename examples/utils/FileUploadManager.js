@@ -247,7 +247,6 @@ export class FileUploadManager {
         await this.parentContext.reloadScene();
       } catch (error) {
         console.error('Error loading uploaded scene:', error);
-        alert(`Failed to load scene: ${error.message}`);
         throw error;
       }
     }

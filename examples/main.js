@@ -204,11 +204,19 @@ export class RoboSpaceDemo {
   }
 
   async reloadScene() {
+    this.clearError();
+
     // Delete the old scene and load the new scene
     this.scene.remove(this.scene.getObjectByName("MuJoCo Root"));
-    [this.model, this.state, this.simulation, this.bodies, this.lights] =
-      await loadSceneFromURL(this.mujoco, this.params.scene, this);
-    this.simulation.forward();
+
+    try {
+      [this.model, this.state, this.simulation, this.bodies, this.lights] =
+        await loadSceneFromURL(this.mujoco, this.params.scene, this);
+      this.simulation.forward();
+    } catch (error) {
+      this.showError(`Failed to load scene "${this.params.scene}": ${this.formatError(error)}`);
+      throw error;
+    }
 
     // Update Python environment
     if (window.pyodide) {
@@ -225,9 +233,15 @@ export class RoboSpaceDemo {
     // Download the the examples to MuJoCo's virtual file system
     await downloadExampleScenesFolder(mujoco);
 
-    // Initialize the three.js Scene using the .xml Model in initialScene
-    [this.model, this.state, this.simulation, this.bodies, this.lights] =
-      await loadSceneFromURL(mujoco, initialScene, this);
+    try {
+      // Initialize the three.js Scene using the .xml Model in initialScene
+      [this.model, this.state, this.simulation, this.bodies, this.lights] =
+        await loadSceneFromURL(mujoco, initialScene, this);
+      this.clearError();
+    } catch (error) {
+      this.showError(`Failed to initialize scene "${initialScene}": ${this.formatError(error)}`);
+      throw error;
+    }
   }
 
   async initializePythonEnvironment() {
@@ -243,6 +257,32 @@ export class RoboSpaceDemo {
   async updatePythonEnvironment() {
     const { updatePythonEnvironment } = await import('./pythonIntegration.js');
     await updatePythonEnvironment(this);
+  }
+
+  showError(message) {
+    const errorElement = document.getElementById('error');
+    if (errorElement) {
+      errorElement.textContent = message;
+    }
+  }
+
+  clearError() {
+    const errorElement = document.getElementById('error');
+    if (errorElement) {
+      errorElement.textContent = '';
+    }
+  }
+
+  formatError(error) {
+    if (!error) {
+      return 'Unknown error';
+    }
+
+    if (typeof error === 'string') {
+      return error;
+    }
+
+    return error.message || String(error);
   }
 
   onWindowResize() {
