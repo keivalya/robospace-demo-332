@@ -6,6 +6,7 @@ import { DragStateManager } from './utils/DragStateManager.js';
 import { setupGUI, downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
 import load_mujoco from '../dist/mujoco_wasm.js';
 import { RobotSerialConnection } from './serialConnection.js';
+import { FileUploadManager } from './utils/FileUploadManager.js';
 
 const loadPyodide = window.loadPyodide;
 // Load the MuJoCo Module
@@ -85,7 +86,9 @@ export class RoboSpaceDemo {
 
     this.robotConnection = new RobotSerialConnection();
     this.robotSyncEnabled = false;
+    this.fileUploadManager = new FileUploadManager(this.mujoco, this);
     this.setupRobotConnection();
+    this.fileUploadManager.createUploadInterface();
   }
 
   setupRobotConnection() {
