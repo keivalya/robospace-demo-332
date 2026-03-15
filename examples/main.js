@@ -1,9 +1,8 @@
 // main.js
 import * as THREE from 'three';
-import { GUI } from '../node_modules/three/examples/jsm/libs/lil-gui.module.min.js';
 import { OrbitControls } from '../node_modules/three/examples/jsm/controls/OrbitControls.js';
 import { DragStateManager } from './utils/DragStateManager.js';
-import { setupGUI, downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
+import { downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
 import load_mujoco from '../dist/mujoco_wasm.js';
 import { RobotSerialConnection } from './serialConnection.js';
 import { FileUploadManager } from './utils/FileUploadManager.js';
@@ -34,7 +33,6 @@ export class RoboSpaceDemo {
     this.bodies = {}, this.lights = {};
     this.tmpVec = new THREE.Vector3();
     this.tmpQuat = new THREE.Quaternion();
-    this.updateGUICallbacks = [];
     this.setupToolbar();
     this.setupPythonIntegration();
 
@@ -59,9 +57,8 @@ export class RoboSpaceDemo {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
-    // this.renderer.setSize( window.innerWidth, window.innerHeight );
-    const width = window.innerWidth - 40; // Account for collapsed robot info panel
-    const height = window.innerHeight - 60 - 100; // Account for toolbar and python IDE
+    const width = window.innerWidth;
+    const height = window.innerHeight - 60 - 100; // Account for the toolbar and Python IDE
     this.renderer.setSize(width, height);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // default THREE.PCFShadowMap
@@ -213,9 +210,6 @@ export class RoboSpaceDemo {
       await loadSceneFromURL(this.mujoco, this.params.scene, this);
     this.simulation.forward();
 
-    // Update robot info
-    // this.updateRobotInfo();
-
     // Update Python environment
     if (window.pyodide) {
       await this.updatePythonEnvironment();
@@ -225,49 +219,6 @@ export class RoboSpaceDemo {
     this.camera.position.set(2.0, 1.7, 1.7);
     this.controls.target.set(0, 0.7, 0);
     this.controls.update();
-  }
-
-  updateRobotInfo() {
-    if (!this.model) return;
-
-    // Update model name
-    document.getElementById('model-name').textContent = this.params.scene.replace('.xml', '');
-    document.getElementById('body-count').textContent = this.model.nbody;
-    document.getElementById('joint-count').textContent = this.model.njnt;
-
-    // Update joints table
-    const tbody = document.getElementById('joints-tbody');
-    tbody.innerHTML = '';
-
-    // Get joint and actuator information
-    const textDecoder = new TextDecoder("utf-8");
-    const names = textDecoder.decode(this.model.names).split('\0');
-
-    for (let i = 0; i < this.model.nu; i++) {
-      const row = document.createElement('tr');
-
-      const nameIndex = this.model.name_actuatoradr[i];
-      const name = names[nameIndex] || `actuator_${i}`;
-
-      let range = [-1, 1];
-      if (this.model.actuator_ctrllimited[i]) {
-        const rangeStart = i * 2;
-        range = [
-          this.model.actuator_ctrlrange[rangeStart],
-          this.model.actuator_ctrlrange[rangeStart + 1]
-        ];
-      }
-
-      row.innerHTML = `
-            <td>${i}</td>
-            <td>${name}</td>
-            <td>actuator</td>
-            <td>[${range[0].toFixed(2)}, ${range[1].toFixed(2)}]</td>
-            <td class="joint-value" id="joint-val-${i}">0.00</td>
-        `;
-
-      tbody.appendChild(row);
-    }
   }
 
   async init() {
@@ -300,7 +251,6 @@ export class RoboSpaceDemo {
     // Calculate available space
     const toolbarHeight = 60;
     const ideHeight = pythonIDE.classList.contains('collapsed') ? 40 : 100;
-    // const infoWidth = robotInfo.classList.contains('collapsed') ? 40 : 400;
 
     const width = window.innerWidth;
     const height = window.innerHeight - toolbarHeight - ideHeight;
@@ -328,16 +278,6 @@ export class RoboSpaceDemo {
           }
         }
 
-        // Update joint value displays
-        if (this.model && this.simulation) {
-          for (let i = 0; i < this.model.nu; i++) {
-            const element = document.getElementById(`joint-val-${i}`);
-            if (element) {
-              element.textContent = this.simulation.ctrl[i].toFixed(2);
-            }
-          }
-        }
-
         for (let i = 0; i < this.simulation.qfrc_applied.length; i++) { this.simulation.qfrc_applied[i] = 0.0; }
         let dragged = this.dragStateManager.physicsObject;
         if (dragged && dragged.bodyID) {
@@ -353,11 +293,6 @@ export class RoboSpaceDemo {
           let force = toMujocoPos(this.dragStateManager.currentWorld.clone().sub(this.dragStateManager.worldHit).multiplyScalar(this.model.body_mass[bodyID] * 250));
           let point = toMujocoPos(this.dragStateManager.worldHit.clone());
           this.simulation.applyForce(force.x, force.y, force.z, 0, 0, 0, point.x, point.y, point.z, bodyID);
-        }
-
-        // Update camera view if rendering
-        if (this.renderingCamera) {
-            this.updateCameraView();
         }
 
         this.simulation.step();
