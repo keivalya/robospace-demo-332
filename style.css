@@ -935,3 +935,78 @@ kbd {
     border-radius: 4px;
     background: rgba(0, 0, 0, 0.3);
 }
+
+/* ── Touch / coarse-pointer tap targets (min 44×44px) ───────
+   Applied only on devices where the primary pointer is coarse
+   (touchscreen). Mouse users are unaffected.                  */
+@media (pointer: coarse) {
+    /* Toolbar buttons */
+    .toolbar-button {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 10px 14px;
+        font-size: 14px;
+    }
+
+    .toolbar-select,
+    .ide-example-select {
+        min-height: 44px;
+        font-size: 14px;
+        padding: 10px 10px;
+    }
+
+    /* Hamburger menu toggle */
+    .toolbar-menu-btn {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 10px;
+    }
+
+    /* IDE buttons */
+    .ide-button {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 10px 16px;
+        font-size: 14px;
+    }
+
+    .ide-button.toggle {
+        min-width: 44px;
+        padding: 10px 12px;
+    }
+
+    /* Info / camera panel icon buttons */
+    .info-button,
+    .camera-toggle {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 10px;
+        font-size: 20px;
+    }
+
+    /* Help overlay close button */
+    #help-close {
+        min-height: 44px;
+        min-width: 44px;
+        font-size: 18px;
+    }
+
+    /* Error panel clear button */
+    #error-panel-clear {
+        min-height: 36px;
+        padding: 6px 12px;
+    }
+
+    /* Live plot close */
+    #live-plot-close {
+        min-height: 44px;
+        min-width: 44px;
+        font-size: 16px;
+    }
+
+    /* IDE resize handle — make it fatter so it's easier to grab */
+    #ide-resize-handle {
+        height: 16px;
+        top: -8px;
+    }
+}
