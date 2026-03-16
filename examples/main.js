@@ -57,7 +57,8 @@ export class RoboSpaceDemo {
     this.scene.add(this.ambientLight);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    // Cap at 2× to avoid excessive GPU load on very high-DPI screens
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     const width = window.innerWidth;
     const height = window.innerHeight - 60 - 100; // Account for the toolbar and Python IDE
     this.renderer.setSize(width, height);
