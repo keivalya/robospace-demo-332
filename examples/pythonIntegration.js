@@ -568,7 +568,9 @@ export function setupPythonIDE(demo) {
             appbody.style.bottom = h + 'px';
         }
 
-        setTimeout(() => demo.onWindowResize(), 10);
+        // Call immediately (no transition on height) so the pixel
+        // buffer is updated before the browser paints the next frame.
+        demo.onWindowResize();
     });
 
     // Clear output
