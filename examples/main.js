@@ -147,20 +147,20 @@ export class RoboSpaceDemo {
     });
 
     // Live plot toggle
-    document.getElementById('plot-toggle-button').addEventListener('click', () => {
-      this.livePlotter.toggle();
-    });
+    const plotBtn = document.getElementById('plot-toggle-button');
+    if (plotBtn) plotBtn.addEventListener('click', () => this.livePlotter.toggle());
 
     // Pause button
     const pauseButton = document.getElementById('pause-button');
-    pauseButton.addEventListener('click', () => {
+    if (pauseButton) pauseButton.addEventListener('click', () => {
       this.params.paused = !this.params.paused;
       pauseButton.textContent = this.params.paused ? '▶' : '⏸';
       pauseButton.classList.toggle('active', this.params.paused);
     });
 
     // Reset button
-    document.getElementById('reset-button').addEventListener('click', () => {
+    const resetBtn = document.getElementById('reset-button');
+    if (resetBtn) resetBtn.addEventListener('click', () => {
       if (this.simulation) {
         this.simulation.resetData();
         this.simulation.forward();
@@ -168,7 +168,8 @@ export class RoboSpaceDemo {
     });
 
     // Reload button
-    document.getElementById('reload-button').addEventListener('click', async () => {
+    const reloadBtn = document.getElementById('reload-button');
+    if (reloadBtn) reloadBtn.addEventListener('click', async () => {
       await this.reloadScene();
     });
 
