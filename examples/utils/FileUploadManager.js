@@ -19,9 +19,10 @@ export class FileUploadManager {
         <span id="upload-status" class="toolbar-value" style="display: none;"></span>
       `;
       
-      // Insert after the scene selector section
-      const sceneSection = toolbar.querySelector('.toolbar-section');
-      toolbar.insertBefore(uploadSection, sceneSection.nextSibling);
+      // Insert after the first toolbar section inside the collapsible wrapper
+      const collapsible = document.getElementById('toolbar-collapsible') || toolbar;
+      const sceneSection = collapsible.querySelector('.toolbar-section');
+      collapsible.insertBefore(uploadSection, sceneSection.nextSibling);
       
       // Create hidden file inputs
       const xmlInput = document.createElement('input');

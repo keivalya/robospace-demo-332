@@ -30,7 +30,7 @@ export class RoboSpaceDemo {
     this.simulation = new mujoco.Simulation(this.model, this.state);
 
     // Define Random State Variables
-    this.params = { scene: initialScene, paused: false, help: false, ctrlnoiserate: 0.0, ctrlnoisestd: 0.0, keyframeNumber: 0, simSpeed: 1.0 };
+    this.params = { scene: initialScene, paused: false, help: false, ctrlnoiserate: 0.0, ctrlnoisestd: 0.0, keyframeNumber: 0 };
     this.mujoco_time = 0.0;
     this.bodies = {}, this.lights = {};
     this.tmpVec = new THREE.Vector3();
@@ -172,36 +172,6 @@ export class RoboSpaceDemo {
       await this.reloadScene();
     });
 
-    // Noise sliders
-    // Simulation speed slider
-    const speedSlider = document.getElementById('speed-slider');
-    const speedValue = document.getElementById('speed-value');
-    speedSlider.value = this.params.simSpeed;
-    speedValue.textContent = this.params.simSpeed.toFixed(2) + '×';
-    speedSlider.addEventListener('input', (e) => {
-      this.params.simSpeed = parseFloat(e.target.value);
-      speedValue.textContent = this.params.simSpeed.toFixed(2) + '×';
-    });
-
-    const noiseRateSlider = document.getElementById('noise-rate-slider');
-    const noiseRateValue = document.getElementById('noise-rate-value');
-    noiseRateSlider.value = this.params.ctrlnoiserate;
-    noiseRateValue.textContent = this.params.ctrlnoiserate.toFixed(2);
-
-    noiseRateSlider.addEventListener('input', (e) => {
-      this.params.ctrlnoiserate = parseFloat(e.target.value);
-      noiseRateValue.textContent = this.params.ctrlnoiserate.toFixed(2);
-    });
-
-    const noiseScaleSlider = document.getElementById('noise-scale-slider');
-    const noiseScaleValue = document.getElementById('noise-scale-value');
-    noiseScaleSlider.value = this.params.ctrlnoisestd;
-    noiseScaleValue.textContent = this.params.ctrlnoisestd.toFixed(2);
-
-    noiseScaleSlider.addEventListener('input', (e) => {
-      this.params.ctrlnoisestd = parseFloat(e.target.value);
-      noiseScaleValue.textContent = this.params.ctrlnoisestd.toFixed(2);
-    });
   }
 
   async setupPythonIntegration() {
@@ -364,11 +334,8 @@ export class RoboSpaceDemo {
 
     if (!this.params["paused"]) {
       let timestep = this.model.getOptions().timestep;
-      // Scale wall-clock time by the user-selected simulation speed
-      const scaledTimeMS = this.mujoco_time + (timeMS - this._lastRealTimeMS || 0) * this.params.simSpeed;
-      this._lastRealTimeMS = timeMS;
-      if (scaledTimeMS - this.mujoco_time > 35.0 * this.params.simSpeed) { this.mujoco_time = scaledTimeMS; }
-      while (this.mujoco_time < scaledTimeMS) {
+      if (timeMS - this.mujoco_time > 35.0) { this.mujoco_time = timeMS; }
+      while (this.mujoco_time < timeMS) {
 
         // Jitter the control state with gaussian random noise
         if (this.params["ctrlnoisestd"] > 0.0) {

@@ -265,40 +265,6 @@ body {
     min-width: 150px;
 }
 
-.toolbar-slider-container {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.toolbar-slider {
-    width: 100px;
-    height: 4px;
-    -webkit-appearance: none;
-    appearance: none;
-    background: #444;
-    border-radius: 2px;
-    outline: none;
-}
-
-.toolbar-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    background: #0a7fff;
-    border-radius: 50%;
-    cursor: pointer;
-}
-
-.toolbar-slider::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
-    background: #0a7fff;
-    border-radius: 50%;
-    cursor: pointer;
-    border: none;
-}
 
 .toolbar-value {
     color: #0a7fff;
