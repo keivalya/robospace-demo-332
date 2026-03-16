@@ -62,7 +62,7 @@ export class RoboSpaceDemo {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     // Initial size — will be corrected by onWindowResize() called below.
     // false = don't touch canvas inline style; CSS fills appbody via position:absolute.
-    this.renderer.setSize(window.innerWidth, window.innerHeight, false);
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // default THREE.PCFShadowMap
     this.renderer.setAnimationLoop(this.render.bind(this));
@@ -327,10 +327,7 @@ export class RoboSpaceDemo {
     const height = appbody.offsetHeight;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    // false = don't update canvas inline style; CSS (position:absolute
-    // inset:0 100%/100%) already keeps the canvas filling appbody.
-    // We only need to update the pixel buffer dimensions here.
-    this.renderer.setSize(width, height, false);
+    this.renderer.setSize(width, height);
   }
 
   render(timeMS) {
