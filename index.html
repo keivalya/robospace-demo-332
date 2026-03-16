@@ -174,11 +174,13 @@
             const handle  = document.getElementById('ide-resize-handle');
             const appbody = document.getElementById('appbody');
 
-            // Restore saved height
+            // Restore saved height only when not collapsed
             const saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
             const initH = (!isNaN(saved) && saved >= MIN_H) ? saved : DEFAULT_H;
-            ide.style.height = initH + 'px';
-            if (appbody) appbody.style.bottom = initH + 'px';
+            if (!ide.classList.contains('collapsed')) {
+                ide.style.height = initH + 'px';
+                if (appbody) appbody.style.bottom = initH + 'px';
+            }
 
             let startY = null, startH = null;
 
@@ -214,7 +216,8 @@
                 if (startY === null) return;
                 startY = null;
                 document.body.style.cursor = '';
-                localStorage.setItem(STORAGE_KEY, ide.offsetHeight);
+                const finalH = ide.offsetHeight;
+                localStorage.setItem(STORAGE_KEY, finalH);
                 handle.releasePointerCapture(e.pointerId);
             });
         })();

@@ -558,9 +558,10 @@ export function setupPythonIDE(demo) {
 
         const appbody = document.getElementById('appbody');
         if (isCollapsed) {
+            // Clear inline height so the CSS .collapsed { height: 40px } takes effect
+            ideContainer.style.height = '';
             appbody.style.bottom = '40px';
         } else {
-            // Restore user-chosen height (or default)
             const saved = parseInt(localStorage.getItem('robospace_ide_height'), 10);
             const h = (!isNaN(saved) && saved >= 40) ? saved : 250;
             ideContainer.style.height = h + 'px';
