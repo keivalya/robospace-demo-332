@@ -477,6 +477,14 @@ body {
     background: linear-gradient(to bottom, #777, #666);
 }
 
+.ide-button.stop {
+    background: linear-gradient(to bottom, #cc3333, #aa2222);
+}
+
+.ide-button.stop:hover {
+    background: linear-gradient(to bottom, #dd4444, #bb3333);
+}
+
 .ide-button.toggle {
     background: transparent;
     color: #aaa;

@@ -209,6 +209,9 @@ export async function initializePythonEnvironment(demo) {
             demo.robotSyncEnabled = enabled;
         };
 
+        // Set up interrupt buffer so Stop button can kill long-running scripts
+        _setupInterruptBuffer();
+
         // Initialize Python environment with helper functions
         await window.pyodide.runPythonAsync(`
 import numpy as np
@@ -217,20 +220,34 @@ import json
 import math
 import sys
 import io
-import base64
-from io import BytesIO
+import asyncio
 
 # Redirect stdout and stderr to the OUTPUT panel
 class OutputRedirector:
     def write(self, text):
         if text and text != '\\n':
             window.pythonOutput(text)
-    
+
     def flush(self):
         pass
 
 sys.stdout = OutputRedirector()
 sys.stderr = OutputRedirector()
+
+async def yield_control():
+    """Yield control back to the browser for one frame.
+
+    Call this inside long-running loops so the 3D simulation keeps
+    rendering and the Stop button stays responsive:
+
+        for i in range(10000):
+            set_control(compute_control())
+            await yield_control()
+    """
+    # Check soft-stop flag (fallback when SharedArrayBuffer is unavailable)
+    if window._pythonShouldStop:
+        raise KeyboardInterrupt("Stopped by user")
+    await asyncio.sleep(0)
 
 # Helper functions to interact with MuJoCo
 def get_num_actuators():
@@ -402,7 +419,7 @@ def enable_robot_sync(enabled=True):
     """Enable/disable position synchronization"""
     window.setRobotSync(enabled)
 
-print("RoboSpace 🪐")
+print("RoboSpace")
 print("  get_num_actuators()  - Get number of actuators")
 print("  get_actuator_names() - Get actuator names")
 print("  get_actuator_ranges()- Get control ranges")
@@ -411,6 +428,7 @@ print("  get_control()        - Get current control")
 print("  get_qpos()           - Get positions")
 print("  reset()              - Reset simulation")
 print("  step()               - Step simulation")
+print("  await yield_control()- Yield to browser (use in loops!)")
 print("... and many more!")`);
 
         console.log("Python environment initialized");
@@ -434,6 +452,34 @@ print_info()
     }
 }
 
+// Shared interrupt buffer — allows stopping Python from JS
+let _interruptBuffer = null;
+
+function _setupInterruptBuffer() {
+    try {
+        _interruptBuffer = new Uint8Array(new SharedArrayBuffer(1));
+        window.pyodide.setInterruptBuffer(_interruptBuffer);
+    } catch (e) {
+        // SharedArrayBuffer unavailable (missing COOP/COEP headers) — stop button
+        // will fall back to a best-effort approach without hard interrupts
+        console.warn('SharedArrayBuffer not available; Stop button will use soft interrupt.', e);
+        _interruptBuffer = null;
+    }
+}
+
+function _setRunning(isRunning) {
+    const runButton = document.getElementById('run-python');
+    const stopButton = document.getElementById('stop-python');
+    if (!runButton || !stopButton) return;
+    if (isRunning) {
+        runButton.style.display = 'none';
+        stopButton.style.display = '';
+    } else {
+        runButton.style.display = '';
+        stopButton.style.display = 'none';
+    }
+}
+
 export function setupPythonIDE(demo) {
     const runButton = document.getElementById('run-python');
     const clearButton = document.getElementById('clear-python');
@@ -442,6 +488,14 @@ export function setupPythonIDE(demo) {
     const outputArea = document.getElementById('python-output');
     const ideContainer = document.getElementById('python-ide');
     const editorContainer = document.getElementById('python-editor-container');
+
+    // Inject Stop button next to Run
+    const stopButton = document.createElement('button');
+    stopButton.id = 'stop-python';
+    stopButton.className = 'ide-button stop';
+    stopButton.textContent = '⏹ STOP';
+    stopButton.style.display = 'none';
+    runButton.insertAdjacentElement('afterend', stopButton);
 
     // Set initial example code
     codeArea.value = `# Get system information
@@ -486,6 +540,15 @@ for i in range(n_actuators):
         });
     }
 
+    // Stop button — sends SIGINT to Pyodide
+    stopButton.addEventListener('click', () => {
+        if (_interruptBuffer) {
+            _interruptBuffer[0] = 2; // SIGINT
+        }
+        // Soft fallback: flag checked by yield_control()
+        window._pythonShouldStop = true;
+    });
+
     // Run Python code
     runButton.addEventListener('click', async () => {
         if (!window.pyodide) {
@@ -496,20 +559,33 @@ for i in range(n_actuators):
         const code = codeArea.value;
         if (!code.trim()) return;
 
+        // Reset interrupt state
+        if (_interruptBuffer) _interruptBuffer[0] = 0;
+        window._pythonShouldStop = false;
+
         outputArea.innerHTML = '<div class="output-label">OUTPUT</div>';
         window.pythonOutput("Running...\n");
+        _setRunning(true);
 
         try {
             // Load packages that might be imported in the code
             await window.pyodide.loadPackagesFromImports(code);
 
-            // Run the code
+            // Run the code — async so the browser can process events between microtasks
             await window.pyodide.runPythonAsync(code);
             window.pythonOutput("\n✓ Execution completed");
         } catch (error) {
-            // Extract just the error message, not the full traceback
-            const errorMsg = error.message.split('\n').slice(-1)[0] || error.message;
-            window.pythonOutput(`\n✗ Error: ${errorMsg}`);
+            const msg = error.message || String(error);
+            // KeyboardInterrupt is expected when user clicks Stop
+            if (msg.includes('KeyboardInterrupt') || msg.includes('PythonError')) {
+                window.pythonOutput("\n⏹ Stopped by user");
+            } else {
+                const errorMsg = msg.split('\n').slice(-1)[0] || msg;
+                window.pythonOutput(`\n✗ Error: ${errorMsg}`);
+            }
+        } finally {
+            _setRunning(false);
+            window._pythonShouldStop = false;
         }
     });
 
@@ -518,6 +594,10 @@ for i in range(n_actuators):
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
             e.preventDefault();
             runButton.click();
+        }
+        // Escape to stop
+        if (e.key === 'Escape') {
+            stopButton.click();
         }
     });
 }
