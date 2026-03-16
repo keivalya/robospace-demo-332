@@ -553,9 +553,25 @@ body {
     border: none;
     padding: 10px;
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.5;
     resize: none;
+    outline: none;
+}
+
+/* CodeMirror 6 host div */
+#python-code-editor {
+    flex: 1;
+    overflow: hidden;
+    background: #1e1e1e;
+    min-width: 0;
+}
+
+#python-code-editor .cm-editor {
+    height: 100%;
+}
+
+#python-code-editor .cm-editor.cm-focused {
     outline: none;
 }
 

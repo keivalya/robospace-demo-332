@@ -1,6 +1,7 @@
 // pythonIntegration.js
 import * as THREE from 'three';
 import { getPosition, getQuaternion } from './mujocoUtils.js';
+import { createCodeEditor } from './utils/CodeEditor.js';
 
 export async function initializePythonEnvironment(demo) {
     if (!window.pyodide) return;
@@ -496,10 +497,11 @@ export function setupPythonIDE(demo) {
     const runButton = document.getElementById('run-python');
     const clearButton = document.getElementById('clear-python');
     const toggleButton = document.getElementById('toggle-ide');
-    const codeArea = document.getElementById('python-code');
+    const codeArea = document.getElementById('python-code');        // hidden fallback
     const outputArea = document.getElementById('python-output');
     const ideContainer = document.getElementById('python-ide');
     const editorContainer = document.getElementById('python-editor-container');
+    const editorHost = document.getElementById('python-code-editor');
 
     // Inject Stop button next to Run
     const stopButton = document.createElement('button');
@@ -509,18 +511,43 @@ export function setupPythonIDE(demo) {
     stopButton.style.display = 'none';
     runButton.insertAdjacentElement('afterend', stopButton);
 
-    // Restore last script from localStorage, or show the default example
+    // ── CodeMirror editor ──────────────────────────────────────
     const savedScript = localStorage.getItem(STORAGE_KEY_SCRIPT);
-    codeArea.value = savedScript !== null ? savedScript : DEFAULT_SCRIPT;
+    const initialScript = savedScript !== null ? savedScript : DEFAULT_SCRIPT;
+
+    let _editor = null;
+    try {
+        _editor = createCodeEditor(editorHost, initialScript);
+    } catch (e) {
+        // Fallback: show plain textarea if CM fails to load
+        console.warn('CodeMirror failed to load, falling back to textarea:', e);
+        editorHost.style.display = 'none';
+        codeArea.style.display = '';
+        codeArea.value = initialScript;
+    }
+
+    /** Get current script text regardless of editor type. */
+    const getCode = () => _editor ? _editor.getValue() : codeArea.value;
 
     // Persist script on every keystroke (debounced 500 ms)
     let _saveTimer = null;
-    codeArea.addEventListener('input', () => {
+    const _onInput = () => {
         clearTimeout(_saveTimer);
         _saveTimer = setTimeout(() => {
-            localStorage.setItem(STORAGE_KEY_SCRIPT, codeArea.value);
+            localStorage.setItem(STORAGE_KEY_SCRIPT, getCode());
         }, 500);
-    });
+    };
+    if (_editor) {
+        // CodeMirror fires DOM input events on its content div
+        editorHost.addEventListener('input', _onInput);
+        // Also hook keydown for Ctrl+Enter / Escape
+        _editor.addKeyHandler((e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runButton.click(); }
+            if (e.key === 'Escape') stopButton.click();
+        });
+    } else {
+        codeArea.addEventListener('input', _onInput);
+    }
 
     // Toggle IDE
     toggleButton.addEventListener('click', () => {
@@ -569,7 +596,7 @@ export function setupPythonIDE(demo) {
             return;
         }
 
-        const code = codeArea.value;
+        const code = getCode();
         if (!code.trim()) return;
 
         // Reset interrupt state
@@ -602,17 +629,13 @@ export function setupPythonIDE(demo) {
         }
     });
 
-    // Keyboard shortcut
-    codeArea.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-            e.preventDefault();
-            runButton.click();
-        }
-        // Escape to stop
-        if (e.key === 'Escape') {
-            stopButton.click();
-        }
-    });
+    // Keyboard shortcut for plain textarea fallback
+    if (!_editor) {
+        codeArea.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runButton.click(); }
+            if (e.key === 'Escape') stopButton.click();
+        });
+    }
 }
 
 // Example code snippets for different scenarios
