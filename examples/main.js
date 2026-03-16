@@ -315,9 +315,6 @@ export class RoboSpaceDemo {
       case 'e': case 'E':
         document.getElementById('reload-button').click();
         break;
-      case 't': case 'T':
-        document.getElementById('toggle-ide').click();
-        break;
     }
   }
 

@@ -86,7 +86,6 @@
                     <tr><td><kbd>E</kbd></td><td>Reload environment</td></tr>
                     <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Run Python script</td></tr>
                     <tr><td><kbd>Esc</kbd></td><td>Stop running script</td></tr>
-                    <tr><td><kbd>T</kbd></td><td>Toggle Python IDE panel</td></tr>
                     <tr><td><kbd>Mouse drag</kbd></td><td>Orbit camera</td></tr>
                     <tr><td><kbd>Scroll</kbd></td><td>Zoom camera</td></tr>
                     <tr><td><kbd>Right-drag</kbd></td><td>Pan camera</td></tr>
@@ -144,12 +143,8 @@
                 <span>Simulation Controller</span>
             </div>
             <div class="ide-controls">
-                <select id="example-selector" class="ide-example-select" title="Load an example script">
-                    <option value="">Examples…</option>
-                </select>
                 <button id="run-python" class="ide-button">▶ RUN</button>
                 <button id="clear-python" class="ide-button clear">✕</button>
-                <button id="toggle-ide" class="ide-button toggle">⌄</button>
             </div>
         </div>
         <div id="python-editor-container">
@@ -174,18 +169,14 @@
             const handle  = document.getElementById('ide-resize-handle');
             const appbody = document.getElementById('appbody');
 
-            // Restore saved height only when not collapsed
             const saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
             const initH = (!isNaN(saved) && saved >= MIN_H) ? saved : DEFAULT_H;
-            if (!ide.classList.contains('collapsed')) {
-                ide.style.height = initH + 'px';
-                if (appbody) appbody.style.bottom = initH + 'px';
-            }
+            ide.style.height = initH + 'px';
+            if (appbody) appbody.style.bottom = initH + 'px';
 
             let startY = null, startH = null;
 
             handle.addEventListener('pointerdown', (e) => {
-                if (ide.classList.contains('collapsed')) return;
                 startY = e.clientY;
                 startH = ide.offsetHeight;
                 handle.setPointerCapture(e.pointerId);

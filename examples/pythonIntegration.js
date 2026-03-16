@@ -496,11 +496,8 @@ for i in range(n_actuators):
 export function setupPythonIDE(demo) {
     const runButton = document.getElementById('run-python');
     const clearButton = document.getElementById('clear-python');
-    const toggleButton = document.getElementById('toggle-ide');
     const codeArea = document.getElementById('python-code');        // hidden fallback
     const outputArea = document.getElementById('python-output');
-    const ideContainer = document.getElementById('python-ide');
-    const editorContainer = document.getElementById('python-editor-container');
     const editorHost = document.getElementById('python-code-editor');
 
     // Inject Stop button next to Run
@@ -549,67 +546,10 @@ export function setupPythonIDE(demo) {
         codeArea.addEventListener('input', _onInput);
     }
 
-    // Toggle IDE
-    toggleButton.addEventListener('click', () => {
-        ideContainer.classList.toggle('collapsed');
-        const isCollapsed = ideContainer.classList.contains('collapsed');
-        toggleButton.textContent = isCollapsed ? '⌃' : '⌄';
-        editorContainer.classList.toggle('hidden', isCollapsed);
-
-        const appbody = document.getElementById('appbody');
-        if (isCollapsed) {
-            // Clear inline height so the CSS .collapsed { height: 40px } takes effect
-            ideContainer.style.height = '';
-            appbody.style.bottom = '40px';
-        } else {
-            const saved = parseInt(localStorage.getItem('robospace_ide_height'), 10);
-            const h = (!isNaN(saved) && saved >= 40) ? saved : 250;
-            ideContainer.style.height = h + 'px';
-            appbody.style.bottom = h + 'px';
-        }
-
-        // Call immediately (no transition on height) so the pixel
-        // buffer is updated before the browser paints the next frame.
-        demo.onWindowResize();
-    });
-
     // Clear output
     clearButton.addEventListener('click', () => {
         outputArea.innerHTML = '<div class="output-label">OUTPUT</div>';
     });
-
-    // Populate and wire the example selector
-    const exampleSelector = document.getElementById('example-selector');
-    if (exampleSelector) {
-        const labels = {
-            basic_control:    'Basic Control',
-            sine_wave:        'Sine Wave',
-            walking_pattern:  'Walking Pattern',
-            pd_control:       'PD Controller',
-            oscillation:      'Multi-freq Oscillation',
-            info:             'Print System Info',
-        };
-        Object.entries(labels).forEach(([key, label]) => {
-            if (PYTHON_EXAMPLES[key]) {
-                const opt = document.createElement('option');
-                opt.value = key;
-                opt.textContent = label;
-                exampleSelector.appendChild(opt);
-            }
-        });
-
-        exampleSelector.addEventListener('change', (e) => {
-            const code = PYTHON_EXAMPLES[e.target.value];
-            if (!code) return;
-            if (_editor) {
-                _editor.setValue(code);
-            } else {
-                codeArea.value = code;
-            }
-            localStorage.setItem(STORAGE_KEY_SCRIPT, code);
-            e.target.value = ''; // reset to placeholder
-        });
-    }
 
     // Stop button — sends SIGINT to Pyodide
     stopButton.addEventListener('click', () => {
