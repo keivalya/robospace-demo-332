@@ -130,9 +130,23 @@
         })();
     </script>
 
+    <!-- Error Log Panel -->
+    <div id="error-panel" style="display:none">
+        <div id="error-panel-header">
+            <span>Errors</span>
+            <button id="error-panel-clear" title="Clear errors">✕ Clear</button>
+        </div>
+        <div id="error-log"></div>
+    </div>
+    <script>
+        document.getElementById('error-panel-clear').addEventListener('click', () => {
+            document.getElementById('error-log').innerHTML = '';
+            document.getElementById('error-panel').style.display = 'none';
+        });
+    </script>
+
     <!-- Main 3D View -->
     <div id="appbody">
-        <div id="error"></div>
         <script type="module" src="./examples/main.js"></script>
     </div>
 

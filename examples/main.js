@@ -274,17 +274,22 @@ export class RoboSpaceDemo {
   }
 
   showError(message) {
-    const errorElement = document.getElementById('error');
-    if (errorElement) {
-      errorElement.textContent = message;
-    }
+    const errorLog = document.getElementById('error-log');
+    if (!errorLog) return;
+
+    const entry = document.createElement('div');
+    entry.className = 'error-entry';
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    entry.innerHTML = `<span class="error-time">${time}</span> ${message}`;
+    errorLog.appendChild(entry);
+    errorLog.scrollTop = errorLog.scrollHeight;
+
+    const panel = document.getElementById('error-panel');
+    if (panel) panel.style.display = 'flex';
   }
 
   clearError() {
-    const errorElement = document.getElementById('error');
-    if (errorElement) {
-      errorElement.textContent = '';
-    }
+    // no-op: errors remain in the log until user clears them
   }
 
   formatError(error) {
