@@ -131,11 +131,43 @@
         });
     </script>
 
+    <!-- Main 3D View -->
+    <div id="appbody">
+        <script type="module" src="./examples/main.js?v=2"></script>
+    </div>
+
+    <!-- Python IDE -->
+    <div id="python-ide">
+        <div id="ide-resize-handle" title="Drag to resize"></div>
+        <div class="ide-header">
+            <div class="ide-title">
+                <span>Simulation Controller</span>
+            </div>
+            <div class="ide-controls">
+                <select id="example-selector" class="ide-example-select" title="Load an example script">
+                    <option value="">Examples…</option>
+                </select>
+                <button id="run-python" class="ide-button">▶ RUN</button>
+                <button id="clear-python" class="ide-button clear">✕</button>
+                <button id="toggle-ide" class="ide-button toggle">⌄</button>
+            </div>
+        </div>
+        <div id="python-editor-container">
+            <div id="python-code-editor"></div>
+            <!-- Hidden textarea kept as fallback value carrier for non-CM paths -->
+            <textarea id="python-code" style="display:none"></textarea>
+            <div id="python-output">
+                <div class="output-label">OUTPUT</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- IDE resize handle — placed after all elements so getElementById works -->
     <script>
         (function () {
             const STORAGE_KEY = 'robospace_ide_height';
-            const MIN_H = 40;
-            const MAX_H = window.innerHeight * 0.75;
+            const MIN_H    = 40;
+            const MAX_H    = window.innerHeight * 0.75;
             const DEFAULT_H = 250;
 
             const ide     = document.getElementById('python-ide');
@@ -177,37 +209,6 @@
             });
         })();
     </script>
-
-    <!-- Main 3D View -->
-    <div id="appbody">
-        <script type="module" src="./examples/main.js?v=2"></script>
-    </div>
-
-    <!-- Python IDE -->
-    <div id="python-ide">
-        <div id="ide-resize-handle" title="Drag to resize"></div>
-        <div class="ide-header">
-            <div class="ide-title">
-                <span>Simulation Controller</span>
-            </div>
-            <div class="ide-controls">
-                <select id="example-selector" class="ide-example-select" title="Load an example script">
-                    <option value="">Examples…</option>
-                </select>
-                <button id="run-python" class="ide-button">▶ RUN</button>
-                <button id="clear-python" class="ide-button clear">✕</button>
-                <button id="toggle-ide" class="ide-button toggle">⌄</button>
-            </div>
-        </div>
-        <div id="python-editor-container">
-            <div id="python-code-editor"></div>
-            <!-- Hidden textarea kept as fallback value carrier for non-CM paths -->
-            <textarea id="python-code" style="display:none"></textarea>
-            <div id="python-output">
-                <div class="output-label">OUTPUT</div>
-            </div>
-        </div>
-    </div>
 </body>
 
 </html>
