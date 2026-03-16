@@ -60,9 +60,9 @@ export class RoboSpaceDemo {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     // Cap at 2× to avoid excessive GPU load on very high-DPI screens
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    const width = window.innerWidth;
-    const height = window.innerHeight - 60 - 100; // Account for the toolbar and Python IDE
-    this.renderer.setSize(width, height);
+    // Initial size — will be corrected by onWindowResize() called below.
+    // false = don't touch canvas inline style; CSS fills appbody via position:absolute.
+    this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // default THREE.PCFShadowMap
     this.renderer.setAnimationLoop(this.render.bind(this));
@@ -322,14 +322,15 @@ export class RoboSpaceDemo {
   }
 
   onWindowResize() {
-    // Use the appbody's actual rendered size so the aspect ratio is
-    // always correct regardless of IDE panel height or toolbar size.
     const appbody = document.getElementById('appbody');
     const width  = appbody.offsetWidth;
     const height = appbody.offsetHeight;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
+    // false = don't update canvas inline style; CSS (position:absolute
+    // inset:0 100%/100%) already keeps the canvas filling appbody.
+    // We only need to update the pixel buffer dimensions here.
+    this.renderer.setSize(width, height, false);
   }
 
   render(timeMS) {
