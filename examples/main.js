@@ -322,14 +322,11 @@ export class RoboSpaceDemo {
   }
 
   onWindowResize() {
-    const pythonIDE = document.getElementById('python-ide');
-
-    // Calculate available space
-    const toolbarHeight = 60;
-    const ideHeight = pythonIDE.classList.contains('collapsed') ? 40 : 100;
-
-    const width = window.innerWidth;
-    const height = window.innerHeight - toolbarHeight - ideHeight;
+    // Use the appbody's actual rendered size so the aspect ratio is
+    // always correct regardless of IDE panel height or toolbar size.
+    const appbody = document.getElementById('appbody');
+    const width  = appbody.offsetWidth;
+    const height = appbody.offsetHeight;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
