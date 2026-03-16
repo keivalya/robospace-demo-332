@@ -1,6 +1,6 @@
 // main.js
 import * as THREE from 'three';
-import { OrbitControls } from '../node_modules/three/examples/jsm/controls/OrbitControls.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { DragStateManager } from './utils/DragStateManager.js';
 import { downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
 import load_mujoco from '../dist/mujoco_wasm.js';
@@ -12,7 +12,8 @@ const loadPyodide = window.loadPyodide;
 const mujoco = await load_mujoco();
 
 // Set up Emscripten's Virtual File System
-var initialScene = "universal_robots_ur5e/scene.xml";
+const STORAGE_KEY_SCENE = 'robospace_last_scene';
+var initialScene = localStorage.getItem(STORAGE_KEY_SCENE) || "universal_robots_ur5e/scene.xml";
 mujoco.FS.mkdir('/working');
 mujoco.FS.mount(mujoco.MEMFS, { root: '.' }, '/working');
 await downloadExampleScenesFolder(mujoco);
@@ -136,6 +137,7 @@ export class RoboSpaceDemo {
 
     sceneSelector.addEventListener('change', async (e) => {
       this.params.scene = e.target.value;
+      localStorage.setItem(STORAGE_KEY_SCENE, this.params.scene);
       await this.reloadScene();
     });
 

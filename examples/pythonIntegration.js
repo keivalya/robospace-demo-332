@@ -480,6 +480,18 @@ function _setRunning(isRunning) {
     }
 }
 
+const STORAGE_KEY_SCRIPT = 'robospace_last_script';
+const DEFAULT_SCRIPT = `# Get system information
+n_actuators = get_num_actuators()
+print(f"Number of actuators: {n_actuators}")
+
+# Print actuator details
+names = get_actuator_names()
+ranges = get_actuator_ranges()
+for i in range(n_actuators):
+    print(f"  {i}: {names[i]} \\t [{ranges[i][0]:.2f}, {ranges[i][1]:.2f}]")
+`;
+
 export function setupPythonIDE(demo) {
     const runButton = document.getElementById('run-python');
     const clearButton = document.getElementById('clear-python');
@@ -497,17 +509,18 @@ export function setupPythonIDE(demo) {
     stopButton.style.display = 'none';
     runButton.insertAdjacentElement('afterend', stopButton);
 
-    // Set initial example code
-    codeArea.value = `# Get system information
-n_actuators = get_num_actuators()
-print(f"Number of actuators: {n_actuators}")
+    // Restore last script from localStorage, or show the default example
+    const savedScript = localStorage.getItem(STORAGE_KEY_SCRIPT);
+    codeArea.value = savedScript !== null ? savedScript : DEFAULT_SCRIPT;
 
-# Print actuator details
-names = get_actuator_names()
-ranges = get_actuator_ranges()
-for i in range(n_actuators):
-    print(f"  {i}: {names[i]} \t [{ranges[i][0]:.2f}, {ranges[i][1]:.2f}]")
-`;
+    // Persist script on every keystroke (debounced 500 ms)
+    let _saveTimer = null;
+    codeArea.addEventListener('input', () => {
+        clearTimeout(_saveTimer);
+        _saveTimer = setTimeout(() => {
+            localStorage.setItem(STORAGE_KEY_SCRIPT, codeArea.value);
+        }, 500);
+    });
 
     // Toggle IDE
     toggleButton.addEventListener('click', () => {
