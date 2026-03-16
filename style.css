@@ -142,6 +142,7 @@ body {
         gap: 0;
         padding: 8px 0;
         box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+        z-index: 1001;
     }
 
     #toolbar-collapsible.open {
@@ -178,6 +179,43 @@ body {
 
     #appbody {
         top: 52px;
+    }
+
+    /* Python IDE: full width, shorter height on mobile so the 3D view
+       still has room. Users can collapse it entirely if needed. */
+    #python-ide {
+        right: 0 !important;
+        height: 200px;
+    }
+
+    #python-ide.collapsed {
+        height: 40px;
+    }
+
+    /* Output panel stacks below editor on narrow screens */
+    #python-editor-container {
+        flex-direction: column;
+    }
+
+    #python-output {
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid #444;
+        height: 80px;
+    }
+
+    /* Robot info panel: full-width strip at bottom-right corner,
+       auto-collapse on mobile to save screen space */
+    #robot-info {
+        width: 100%;
+        height: 200px;
+        right: 0;
+        bottom: 200px;
+    }
+
+    #robot-info.collapsed {
+        width: 40px;
+        height: 40px;
     }
 }
 
