@@ -78,6 +78,7 @@ export class RoboSpaceDemo {
     this.controls.update();
 
     window.addEventListener('resize', this.onWindowResize.bind(this));
+    window.addEventListener('keydown', this.onKeyDown.bind(this));
 
     // Initialize the Drag State Manager.
     this.dragStateManager = new DragStateManager(this.scene, this.renderer, this.camera, this.container.parentElement, this.controls);
@@ -286,6 +287,27 @@ export class RoboSpaceDemo {
     }
 
     return error.message || String(error);
+  }
+
+  onKeyDown(e) {
+    // Don't hijack keys when the user is typing in the Python editor
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+
+    switch (e.key) {
+      case ' ':
+        e.preventDefault();
+        document.getElementById('pause-button').click();
+        break;
+      case 'r': case 'R':
+        document.getElementById('reset-button').click();
+        break;
+      case 'e': case 'E':
+        document.getElementById('reload-button').click();
+        break;
+      case 't': case 'T':
+        document.getElementById('toggle-ide').click();
+        break;
+    }
   }
 
   onWindowResize() {

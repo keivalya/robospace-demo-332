@@ -720,6 +720,88 @@ body {
     opacity: 0.9;
 }
 
+/* ── Help overlay ────────────────────────────────────────── */
+#help-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+#help-box {
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 8px;
+    min-width: 340px;
+    max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+    overflow: hidden;
+}
+
+#help-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: linear-gradient(to bottom, #2a2a2a, #222);
+    border-bottom: 1px solid #444;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#help-close {
+    background: transparent;
+    border: none;
+    color: #aaa;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: color 0.2s;
+}
+
+#help-close:hover {
+    color: #fff;
+}
+
+#help-table {
+    width: 100%;
+    border-collapse: collapse;
+    padding: 8px;
+}
+
+#help-table td {
+    padding: 8px 16px;
+    color: #ccc;
+    font-size: 13px;
+    border-bottom: 1px solid #2a2a2a;
+}
+
+#help-table tr:last-child td {
+    border-bottom: none;
+}
+
+#help-table td:first-child {
+    white-space: nowrap;
+    color: #aaa;
+    width: 1%;
+}
+
+kbd {
+    display: inline-block;
+    background: #333;
+    border: 1px solid #555;
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-family: monospace;
+    font-size: 12px;
+    color: #ddd;
+}
+
 #connection-status {
     font-weight: 600;
     padding: 4px 8px;

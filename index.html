@@ -76,6 +76,51 @@
         });
     </script>
 
+    <!-- Keyboard Shortcut Help Overlay -->
+    <div id="help-overlay" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" style="display:none">
+        <div id="help-box">
+            <div id="help-header">
+                <span>Keyboard Shortcuts</span>
+                <button id="help-close" aria-label="Close">✕</button>
+            </div>
+            <table id="help-table">
+                <tbody>
+                    <tr><td><kbd>?</kbd></td><td>Toggle this help</td></tr>
+                    <tr><td><kbd>Space</kbd></td><td>Pause / Resume simulation</td></tr>
+                    <tr><td><kbd>R</kbd></td><td>Reset robot</td></tr>
+                    <tr><td><kbd>E</kbd></td><td>Reload environment</td></tr>
+                    <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Run Python script</td></tr>
+                    <tr><td><kbd>Esc</kbd></td><td>Stop running script</td></tr>
+                    <tr><td><kbd>T</kbd></td><td>Toggle Python IDE panel</td></tr>
+                    <tr><td><kbd>Mouse drag</kbd></td><td>Orbit camera</td></tr>
+                    <tr><td><kbd>Scroll</kbd></td><td>Zoom camera</td></tr>
+                    <tr><td><kbd>Right-drag</kbd></td><td>Pan camera</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            const overlay = document.getElementById('help-overlay');
+            const close = document.getElementById('help-close');
+
+            function toggleHelp() {
+                const visible = overlay.style.display !== 'none';
+                overlay.style.display = visible ? 'none' : 'flex';
+            }
+
+            close.addEventListener('click', toggleHelp);
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) toggleHelp(); });
+
+            document.addEventListener('keydown', (e) => {
+                // Don't fire shortcuts when typing in the Python editor
+                if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+                if (e.key === '?') { e.preventDefault(); toggleHelp(); }
+            });
+        })();
+    </script>
+
     <!-- Main 3D View -->
     <div id="appbody">
         <div id="error"></div>
