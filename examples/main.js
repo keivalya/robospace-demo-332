@@ -6,6 +6,7 @@ import { downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaterni
 import load_mujoco from '../dist/mujoco_wasm.js';
 import { RobotSerialConnection } from './serialConnection.js';
 import { FileUploadManager } from './utils/FileUploadManager.js';
+import { LivePlotter } from './utils/LivePlotter.js';
 
 const loadPyodide = window.loadPyodide;
 // Load the MuJoCo Module
@@ -89,6 +90,8 @@ export class RoboSpaceDemo {
     this.fileUploadManager = new FileUploadManager(this.mujoco, this);
     this.setupRobotConnection();
     this.fileUploadManager.createUploadInterface();
+
+    this.livePlotter = new LivePlotter();
   }
 
   setupRobotConnection() {
@@ -141,6 +144,11 @@ export class RoboSpaceDemo {
       this.params.scene = e.target.value;
       localStorage.setItem(STORAGE_KEY_SCENE, this.params.scene);
       await this.reloadScene();
+    });
+
+    // Live plot toggle
+    document.getElementById('plot-toggle-button').addEventListener('click', () => {
+      this.livePlotter.toggle();
     });
 
     // Pause button
@@ -235,6 +243,18 @@ export class RoboSpaceDemo {
     // Update Python environment
     if (window.pyodide) {
       await this.updatePythonEnvironment();
+    }
+
+    // Update plotter labels from joint names
+    if (this.livePlotter && this.model) {
+      const decoder = new TextDecoder('utf-8');
+      const labels = [];
+      for (let i = 0; i < Math.min(this.model.njnt, 8); i++) {
+        const addr = this.model.name_jntadr[i];
+        const raw  = decoder.decode(this.model.names.subarray(addr));
+        labels.push(raw.split('\0')[0] || `j${i}`);
+      }
+      this.livePlotter.setLabels(labels);
     }
 
     // Camera reset
@@ -379,6 +399,11 @@ export class RoboSpaceDemo {
         }
 
         this.simulation.step();
+
+        // Feed live plotter (first 8 qpos values)
+        if (this.livePlotter) {
+          this.livePlotter.sample(Array.from(this.simulation.qpos).slice(0, 8));
+        }
 
         if (this.robotSyncEnabled && this.robotConnection.isConnected) {
           // Get joint positions from simulation
