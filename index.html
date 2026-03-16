@@ -131,6 +131,55 @@
         });
     </script>
 
+    <script>
+        (function () {
+            const STORAGE_KEY = 'robospace_ide_height';
+            const MIN_H = 40;
+            const MAX_H = window.innerHeight * 0.75;
+            const DEFAULT_H = 250;
+
+            const ide     = document.getElementById('python-ide');
+            const handle  = document.getElementById('ide-resize-handle');
+            const appbody = document.getElementById('appbody');
+
+            // Restore saved height
+            const saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
+            const initH = (!isNaN(saved) && saved >= MIN_H) ? saved : DEFAULT_H;
+            ide.style.height = initH + 'px';
+            if (appbody) appbody.style.bottom = initH + 'px';
+
+            let startY, startH;
+
+            handle.addEventListener('pointerdown', (e) => {
+                // Ignore if IDE is collapsed
+                if (ide.classList.contains('collapsed')) return;
+                startY = e.clientY;
+                startH = ide.offsetHeight;
+                handle.setPointerCapture(e.pointerId);
+                document.body.style.cursor = 'ns-resize';
+                e.preventDefault();
+            });
+
+            handle.addEventListener('pointermove', (e) => {
+                if (startY === undefined) return;
+                const delta = startY - e.clientY;         // drag up = bigger
+                const newH  = Math.min(MAX_H, Math.max(MIN_H, startH + delta));
+                ide.style.height = newH + 'px';
+                if (appbody) appbody.style.bottom = newH + 'px';
+                // Notify Three.js renderer if available
+                if (window._roboDemo) window._roboDemo.onWindowResize();
+            });
+
+            handle.addEventListener('pointerup', (e) => {
+                if (startY === undefined) return;
+                startY = undefined;
+                document.body.style.cursor = '';
+                localStorage.setItem(STORAGE_KEY, ide.offsetHeight);
+                handle.releasePointerCapture(e.pointerId);
+            });
+        })();
+    </script>
+
     <!-- Main 3D View -->
     <div id="appbody">
         <script type="module" src="./examples/main.js?v=2"></script>
@@ -138,6 +187,7 @@
 
     <!-- Python IDE -->
     <div id="python-ide">
+        <div id="ide-resize-handle" title="Drag to resize"></div>
         <div class="ide-header">
             <div class="ide-title">
                 <span>Simulation Controller</span>

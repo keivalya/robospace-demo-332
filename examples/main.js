@@ -478,4 +478,5 @@ export class RoboSpaceDemo {
 }
 
 let demo = new RoboSpaceDemo();
+window._roboDemo = demo;  // expose for IDE resize handle
 await demo.init();

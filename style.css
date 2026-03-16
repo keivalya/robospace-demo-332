@@ -420,9 +420,30 @@ body {
     flex-direction: column;
     z-index: 1000;
     border-top: 2px solid #0a7fff;
-    /* transition: height 0.3s ease; */
     right: 40px; /* Account for collapsed robot info */
     transition: right 0.3s ease;
+}
+
+/* Drag-to-resize handle */
+#ide-resize-handle {
+    position: absolute;
+    top: -4px;
+    left: 0;
+    width: 100%;
+    height: 8px;
+    cursor: ns-resize;
+    z-index: 1001;
+    background: transparent;
+}
+
+#ide-resize-handle:hover,
+#ide-resize-handle:active {
+    background: rgba(10, 127, 255, 0.25);
+}
+
+/* Hide handle when collapsed — no point resizing a header strip */
+#python-ide.collapsed #ide-resize-handle {
+    display: none;
 }
 
 #python-ide.collapsed {

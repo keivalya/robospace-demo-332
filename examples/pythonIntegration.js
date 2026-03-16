@@ -556,12 +556,18 @@ export function setupPythonIDE(demo) {
         toggleButton.textContent = isCollapsed ? '⌃' : '⌄';
         editorContainer.classList.toggle('hidden', isCollapsed);
 
-        // Adjust appbody height
         const appbody = document.getElementById('appbody');
-        appbody.style.bottom = isCollapsed ? '40px' : '250px';
+        if (isCollapsed) {
+            appbody.style.bottom = '40px';
+        } else {
+            // Restore user-chosen height (or default)
+            const saved = parseInt(localStorage.getItem('robospace_ide_height'), 10);
+            const h = (!isNaN(saved) && saved >= 40) ? saved : 250;
+            ideContainer.style.height = h + 'px';
+            appbody.style.bottom = h + 'px';
+        }
 
-        // Properly resize the renderer
-        setTimeout(() => demo.onWindowResize(), 10); // Small delay for CSS transition
+        setTimeout(() => demo.onWindowResize(), 10);
     });
 
     // Clear output
