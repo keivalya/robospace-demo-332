@@ -8,7 +8,9 @@ export class FileUploadManager {
     }
   
     createUploadInterface() {
-      // Create upload button in toolbar
+      // Guard against being called more than once
+      if (document.getElementById('upload-robot-button')) return;
+
       const toolbar = document.getElementById('toolbar');
       
       // Create a new toolbar section for upload

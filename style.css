@@ -424,24 +424,24 @@ body {
     transition: right 0.3s ease;
 }
 
-/* Drag-to-resize handle */
+/* Drag-to-resize handle — sits INSIDE the IDE so it is never
+   covered by the appbody canvas. The blue border-top acts as
+   the visual affordance; the handle is the interactive layer. */
 #ide-resize-handle {
-    position: absolute;
-    top: -4px;
-    left: 0;
     width: 100%;
-    height: 8px;
+    height: 6px;
     cursor: ns-resize;
-    z-index: 1001;
+    flex-shrink: 0;
     background: transparent;
+    transition: background 0.15s;
 }
 
 #ide-resize-handle:hover,
 #ide-resize-handle:active {
-    background: rgba(10, 127, 255, 0.25);
+    background: rgba(10, 127, 255, 0.3);
 }
 
-/* Hide handle when collapsed — no point resizing a header strip */
+/* Hide handle when collapsed */
 #python-ide.collapsed #ide-resize-handle {
     display: none;
 }
@@ -1004,9 +1004,8 @@ kbd {
         font-size: 16px;
     }
 
-    /* IDE resize handle — make it fatter so it's easier to grab */
+    /* IDE resize handle — fatter grab target on touch */
     #ide-resize-handle {
-        height: 16px;
-        top: -8px;
+        height: 14px;
     }
 }

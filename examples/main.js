@@ -131,14 +131,19 @@ export class RoboSpaceDemo {
       "Default": "scene.xml",
     };
 
-    // Populate scene selector
-    Object.entries(scenes).forEach(([name, file]) => {
-      const option = document.createElement('option');
-      option.value = file;
-      option.textContent = name;
-      if (file === this.params.scene) option.selected = true;
-      sceneSelector.appendChild(option);
-    });
+    // Populate scene selector (guard against double-init)
+    if (sceneSelector.options.length === 0) {
+      Object.entries(scenes).forEach(([name, file]) => {
+        const option = document.createElement('option');
+        option.value = file;
+        option.textContent = name;
+        if (file === this.params.scene) option.selected = true;
+        sceneSelector.appendChild(option);
+      });
+    } else {
+      // Restore correct selection without re-adding options
+      sceneSelector.value = this.params.scene;
+    }
 
     sceneSelector.addEventListener('change', async (e) => {
       this.params.scene = e.target.value;

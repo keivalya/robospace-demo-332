@@ -148,10 +148,9 @@
             ide.style.height = initH + 'px';
             if (appbody) appbody.style.bottom = initH + 'px';
 
-            let startY, startH;
+            let startY = null, startH = null;
 
             handle.addEventListener('pointerdown', (e) => {
-                // Ignore if IDE is collapsed
                 if (ide.classList.contains('collapsed')) return;
                 startY = e.clientY;
                 startH = ide.offsetHeight;
@@ -161,18 +160,17 @@
             });
 
             handle.addEventListener('pointermove', (e) => {
-                if (startY === undefined) return;
-                const delta = startY - e.clientY;         // drag up = bigger
+                if (startY === null) return;
+                const delta = startY - e.clientY;   // drag up → taller
                 const newH  = Math.min(MAX_H, Math.max(MIN_H, startH + delta));
                 ide.style.height = newH + 'px';
                 if (appbody) appbody.style.bottom = newH + 'px';
-                // Notify Three.js renderer if available
                 if (window._roboDemo) window._roboDemo.onWindowResize();
             });
 
             handle.addEventListener('pointerup', (e) => {
-                if (startY === undefined) return;
-                startY = undefined;
+                if (startY === null) return;
+                startY = null;
                 document.body.style.cursor = '';
                 localStorage.setItem(STORAGE_KEY, ide.offsetHeight);
                 handle.releasePointerCapture(e.pointerId);
