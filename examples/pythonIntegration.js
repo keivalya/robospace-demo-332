@@ -569,14 +569,36 @@ export function setupPythonIDE(demo) {
         outputArea.innerHTML = '<div class="output-label">OUTPUT</div>';
     });
 
-    // Add example selector handler
+    // Populate and wire the example selector
     const exampleSelector = document.getElementById('example-selector');
     if (exampleSelector) {
-        exampleSelector.addEventListener('change', (e) => {
-            if (e.target.value && PYTHON_EXAMPLES[e.target.value]) {
-                codeArea.value = PYTHON_EXAMPLES[e.target.value];
-                e.target.value = ''; // Reset selector
+        const labels = {
+            basic_control:    'Basic Control',
+            sine_wave:        'Sine Wave',
+            walking_pattern:  'Walking Pattern',
+            pd_control:       'PD Controller',
+            oscillation:      'Multi-freq Oscillation',
+            info:             'Print System Info',
+        };
+        Object.entries(labels).forEach(([key, label]) => {
+            if (PYTHON_EXAMPLES[key]) {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.textContent = label;
+                exampleSelector.appendChild(opt);
             }
+        });
+
+        exampleSelector.addEventListener('change', (e) => {
+            const code = PYTHON_EXAMPLES[e.target.value];
+            if (!code) return;
+            if (_editor) {
+                _editor.setValue(code);
+            } else {
+                codeArea.value = code;
+            }
+            localStorage.setItem(STORAGE_KEY_SCRIPT, code);
+            e.target.value = ''; // reset to placeholder
         });
     }
 

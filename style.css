@@ -489,6 +489,28 @@ body {
     background: linear-gradient(to bottom, #dd4444, #bb3333);
 }
 
+.ide-example-select {
+    background: #2a2a2a;
+    color: #ccc;
+    border: 1px solid #555;
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    max-width: 150px;
+}
+
+.ide-example-select:hover {
+    border-color: #0a7fff;
+}
+
+@media (max-width: 640px) {
+    .ide-example-select {
+        max-width: 110px;
+        font-size: 11px;
+    }
+}
+
 .ide-button.toggle {
     background: transparent;
     color: #aaa;
