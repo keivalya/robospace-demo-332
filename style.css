@@ -285,8 +285,6 @@ body {
 
 #appbody canvas {
     display: block;
-    width: 100% !important;
-    height: 100% !important;
 }
 
 /* Add Robot Info Panel styles */

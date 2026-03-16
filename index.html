@@ -197,7 +197,17 @@
                 const newH  = Math.min(MAX_H, Math.max(MIN_H, startH + delta));
                 ide.style.height = newH + 'px';
                 if (appbody) appbody.style.bottom = newH + 'px';
-                if (window._roboDemo) window._roboDemo.onWindowResize();
+                // Force renderer to match appbody's new pixel dimensions
+                if (window._roboDemo) {
+                    window._roboDemo.onWindowResize();
+                } else {
+                    // _roboDemo not ready yet — resize canvas directly
+                    const canvas = appbody && appbody.querySelector('canvas');
+                    if (canvas) {
+                        canvas.style.width  = appbody.offsetWidth  + 'px';
+                        canvas.style.height = appbody.offsetHeight + 'px';
+                    }
+                }
             });
 
             handle.addEventListener('pointerup', (e) => {
