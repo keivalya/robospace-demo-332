@@ -303,6 +303,7 @@ export class RoboSpaceDemo {
   onKeyDown(e) {
     // Don't hijack keys when the user is typing in the Python editor
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+    if (document.getElementById('python-ide')?.contains(e.target)) return;
 
     switch (e.key) {
       case ' ':

@@ -110,6 +110,7 @@
             document.addEventListener('keydown', (e) => {
                 // Don't fire shortcuts when typing in the Python editor
                 if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+                if (document.getElementById('python-ide')?.contains(e.target)) return;
                 if (e.key === '?') { e.preventDefault(); toggleHelp(); }
             });
         })();
