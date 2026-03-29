@@ -3,7 +3,7 @@
 
 import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 
@@ -17,7 +17,7 @@ export function createCodeEditor(hostEl, initialValue = '') {
                 history(),
                 python(),
                 oneDark,
-                keymap.of([...defaultKeymap, ...historyKeymap]),
+                keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
                 EditorView.theme({
                     '&': {
                         fontSize: '13px',
