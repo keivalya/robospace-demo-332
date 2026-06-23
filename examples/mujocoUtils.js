@@ -1,7 +1,11 @@
 // mujocoUtils.js
 import * as THREE from 'three';
 import { Reflector  } from './utils/Reflector.js';
-import { RoboSpaceDemo } from './main.js';
+// NOTE: do NOT `import { RoboSpaceDemo } from './main.js'`.
+// It was used only for JSDoc @param types, but importing main.js without the
+// cache-bust query string causes the browser to load it as a *separate* module
+// instance — running `new RoboSpaceDemo()` a second time, producing two
+// simulations, two render loops, and duplicate event listeners.
 
 export async function reloadFunc() {
   // Delete the old scene and load the new scene

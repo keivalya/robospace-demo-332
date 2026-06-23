@@ -13,7 +13,6 @@
     <meta name="theme-color" content="#ffffff">
     <link rel="icon" type="image/x-icon" href="./examples/favicon.png">
     <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
-    <!-- <script src="./dist/mujoco_wasm.js"></script> -->
     <link rel="stylesheet" href="./style.css">
 </head>
 
@@ -37,37 +36,19 @@
         }
     </script>
 
-    <!-- Toolbar -->
+    <!-- Top bar -->
     <div id="toolbar">
-        <div class="toolbar-brand">RoboSpace</div>
-
-        <button id="toolbar-menu-toggle" class="toolbar-menu-btn" aria-label="Toggle menu" aria-expanded="false">
-            <span></span><span></span><span></span>
-        </button>
-
-        <div id="toolbar-collapsible">
-            <div class="toolbar-section">
-                <label class="toolbar-label">Scene</label>
-                <select id="scene-selector" class="toolbar-select"></select>
-            </div>
-
-            <div class="toolbar-section">
-                <button id="pause-button" class="toolbar-button" title="Pause/Play">⏸</button>
-                <button id="reset-button" class="toolbar-button" title="Reset Robot">↺ Robot</button>
-                <button id="reload-button" class="toolbar-button" title="Reload Environment">↺ Env</button>
-                <button id="plot-toggle-button" class="toolbar-button" title="Toggle live joint plot">📈 Plot</button>
-            </div>
-
+        <div class="toolbar-section toolbar-section-scene">
+            <label class="toolbar-label">Scene</label>
+            <select id="scene-selector" class="toolbar-select"></select>
         </div>
+        <div class="toolbar-spacer"></div>
+        <div id="sim-status" class="sim-status loading" role="status" aria-live="polite">
+            <span class="sim-status-dot"></span>
+            <span class="sim-status-label">Simulation Loading…</span>
+        </div>
+        <div class="toolbar-spacer"></div>
     </div>
-
-    <script>
-        document.getElementById('toolbar-menu-toggle').addEventListener('click', function () {
-            const col = document.getElementById('toolbar-collapsible');
-            const expanded = col.classList.toggle('open');
-            this.setAttribute('aria-expanded', expanded);
-        });
-    </script>
 
     <!-- Keyboard Shortcut Help Overlay -->
     <div id="help-overlay" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" style="display:none">
@@ -106,7 +87,6 @@
             overlay.addEventListener('click', (e) => { if (e.target === overlay) toggleHelp(); });
 
             document.addEventListener('keydown', (e) => {
-                // Don't fire shortcuts when typing in the Python editor
                 if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
                 if (document.getElementById('python-ide')?.contains(e.target)) return;
                 if (e.key === '?') { e.preventDefault(); toggleHelp(); }
@@ -129,75 +109,110 @@
         });
     </script>
 
-    <!-- Main 3D View -->
-    <div id="appbody">
-        <script type="module" src="./examples/main.js?v=4"></script>
+    <!-- Main split layout: simulation panel | resize handle | program panel -->
+    <div id="main-split">
+
+        <!-- Simulation panel (left, ~60%) -->
+        <div id="appbody">
+            <!-- canvas injected by main.js -->
+            <div id="viewport-overlays">
+                <button id="plot-toggle-button" class="overlay-button" title="Toggle live joint plot">📈 Plot</button>
+            </div>
+            <div id="sim-footer">
+                <button id="pause-button" class="sim-control" title="Pause/Play (Space)" aria-label="Pause or play simulation">⏸</button>
+                <button id="reset-button" class="sim-control" title="Reset robot (R)" aria-label="Reset robot">↺</button>
+            </div>
+            <script type="module" src="./examples/main.js?v=8"></script>
+        </div>
+
+        <!-- Vertical divider -->
+        <div id="split-handle" title="Drag to resize"></div>
+
+        <!-- Program panel (right, ~40%) -->
+        <div id="python-ide">
+            <div class="ide-header">
+                <div class="ide-title">Program</div>
+                <div class="ide-controls">
+                    <button type="button" id="ide-import-btn" class="ide-icon-btn" title="Import script from file" aria-label="Import script">📄</button>
+                    <button type="button" id="ide-menu-btn" class="ide-icon-btn" title="More options" aria-label="More options" aria-haspopup="true" aria-expanded="false">⋯</button>
+                    <div id="ide-menu-dropdown" class="ide-dropdown" hidden role="menu">
+                        <div class="ide-dropdown-section" data-section="examples">
+                            <div class="ide-dropdown-section-label">Examples</div>
+                            <div id="ide-examples-list"></div>
+                        </div>
+                        <div class="ide-dropdown-divider"></div>
+                        <button class="ide-dropdown-item" data-action="reset-code" role="menuitem">Reset code to default</button>
+                        <button class="ide-dropdown-item" data-action="reload-env" role="menuitem">↺ Reload Env</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="python-editor-container">
+                <div id="python-code-editor"></div>
+                <textarea id="python-code" style="display:none"></textarea>
+            </div>
+
+            <div class="console-section">
+                <div class="console-header">
+                    <span class="console-title">Console</span>
+                    <button id="clear-python" class="console-clear">Clear</button>
+                </div>
+                <div id="python-output">
+                    <div class="output-label">OUTPUT</div>
+                </div>
+            </div>
+
+            <div class="ide-footer">
+                <button id="save-python" class="ide-button save" title="Download script as .py">⬇ Save</button>
+                <button id="run-python" class="ide-button run" title="Run script (Ctrl+Enter)">▶ Run</button>
+                <button id="stop-python" class="ide-button stop" title="Stop running script (Esc)" style="display:none">⏹ Stop</button>
+            </div>
+
+            <input type="file" id="ide-import-file" accept=".py,text/x-python" style="display:none" />
+        </div>
     </div>
 
-    <!-- Python IDE -->
-    <div id="python-ide">
-        <div id="ide-resize-handle" title="Drag to resize"></div>
-        <div class="ide-header">
-            <div class="ide-title">
-                <span>Simulation Controller</span>
-            </div>
-            <div class="ide-controls">
-                <button id="run-python" class="ide-button">▶ RUN</button>
-                <button id="clear-python" class="ide-button clear">✕</button>
-            </div>
-        </div>
-        <div id="python-editor-container">
-            <div id="python-code-editor"></div>
-            <!-- Hidden textarea kept as fallback value carrier for non-CM paths -->
-            <textarea id="python-code" style="display:none"></textarea>
-            <div id="python-output">
-                <div class="output-label">OUTPUT</div>
-            </div>
-        </div>
-    </div>
-
-    <!-- IDE resize handle — placed after all elements so getElementById works -->
+    <!-- Vertical-divider drag wiring -->
     <script>
         (function () {
-            const STORAGE_KEY = 'robospace_ide_height';
-            const MIN_H    = 40;
-            const MAX_H    = window.innerHeight * 0.75;
-            const DEFAULT_H = 250;
+            const STORAGE_KEY = 'robospace_split_ratio';
+            const MIN_RATIO = 0.30;
+            const MAX_RATIO = 0.80;
+            const DEFAULT_RATIO = 0.60;
 
-            const ide     = document.getElementById('python-ide');
-            const handle  = document.getElementById('ide-resize-handle');
-            const appbody = document.getElementById('appbody');
+            const split  = document.getElementById('main-split');
+            const left   = document.getElementById('appbody');
+            const handle = document.getElementById('split-handle');
 
-            const saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
-            const initH = (!isNaN(saved) && saved >= MIN_H) ? saved : DEFAULT_H;
-            ide.style.height = initH + 'px';
-            if (appbody) appbody.style.bottom = initH + 'px';
+            const saved = parseFloat(localStorage.getItem(STORAGE_KEY));
+            const initRatio = (!isNaN(saved) && saved >= MIN_RATIO && saved <= MAX_RATIO) ? saved : DEFAULT_RATIO;
+            left.style.flexBasis = (initRatio * 100) + '%';
 
-            let startY = null, startH = null;
+            let dragging = false;
 
             handle.addEventListener('pointerdown', (e) => {
-                startY = e.clientY;
-                startH = ide.offsetHeight;
+                if (window.matchMedia('(max-width: 640px)').matches) return; // disable drag on stacked mobile
+                dragging = true;
                 handle.setPointerCapture(e.pointerId);
-                document.body.style.cursor = 'ns-resize';
+                document.body.style.cursor = 'ew-resize';
                 e.preventDefault();
             });
 
             handle.addEventListener('pointermove', (e) => {
-                if (startY === null) return;
-                const delta = startY - e.clientY;   // drag up → taller
-                const newH  = Math.min(MAX_H, Math.max(MIN_H, startH + delta));
-                ide.style.height = newH + 'px';
-                if (appbody) appbody.style.bottom = newH + 'px';
+                if (!dragging) return;
+                const rect = split.getBoundingClientRect();
+                const ratio = Math.min(MAX_RATIO, Math.max(MIN_RATIO, (e.clientX - rect.left) / rect.width));
+                left.style.flexBasis = (ratio * 100) + '%';
                 if (window._roboDemo) window._roboDemo.onWindowResize();
             });
 
             handle.addEventListener('pointerup', (e) => {
-                if (startY === null) return;
-                startY = null;
+                if (!dragging) return;
+                dragging = false;
                 document.body.style.cursor = '';
-                const finalH = ide.offsetHeight;
-                localStorage.setItem(STORAGE_KEY, finalH);
+                const rect = split.getBoundingClientRect();
+                const finalRatio = (left.getBoundingClientRect().width) / rect.width;
+                localStorage.setItem(STORAGE_KEY, finalRatio.toFixed(4));
                 handle.releasePointerCapture(e.pointerId);
             });
         })();

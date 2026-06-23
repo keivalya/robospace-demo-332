@@ -34,7 +34,11 @@ export class RoboSpaceDemo {
     this.bodies = {}, this.lights = {};
     this.tmpVec = new THREE.Vector3();
     this.tmpQuat = new THREE.Quaternion();
+    this._sceneReady = false;
+    this._pythonReady = false;
+    this.setupStatusIndicator();
     this.setupToolbar();
+    this.setupProgramControls();
     this.setupPythonIntegration();
 
     // this.container = document.createElement( 'div' );
@@ -85,9 +89,38 @@ export class RoboSpaceDemo {
     this.onWindowResize();
 
     this.fileUploadManager = new FileUploadManager(this.mujoco, this);
-    this.fileUploadManager.createUploadInterface();
+    // Upload Robot UI is omitted from the new layout; re-introduce via the
+    // Program panel kebab menu when needed (FileUploadManager class still works).
 
     this.livePlotter = new LivePlotter();
+  }
+
+  setupStatusIndicator() {
+    const el = document.getElementById('sim-status');
+    const label = el ? el.querySelector('.sim-status-label') : null;
+    const STATE_LABELS = {
+      loading: 'Simulation Loading…',
+      ready:   'Simulation Ready',
+      running: 'Running script',
+      error:   'Error',
+    };
+    const setStatus = (state, customLabel) => {
+      if (!el) return;
+      el.classList.remove('loading', 'ready', 'running', 'error');
+      el.classList.add(state);
+      if (label) label.textContent = customLabel || STATE_LABELS[state] || state;
+    };
+    this.setSimStatus = setStatus;
+    window.setSimStatus = setStatus;
+    setStatus('loading');
+  }
+
+  _markReady(which) {
+    if (which === 'scene') this._sceneReady = true;
+    if (which === 'python') this._pythonReady = true;
+    if (this._sceneReady && this._pythonReady && this.setSimStatus) {
+      this.setSimStatus('ready');
+    }
   }
 
   setupToolbar() {
@@ -107,29 +140,38 @@ export class RoboSpaceDemo {
         sceneSelector.appendChild(option);
       });
     } else {
-      // Restore correct selection without re-adding options
       sceneSelector.value = this.params.scene;
     }
 
     sceneSelector.addEventListener('change', async (e) => {
       this.params.scene = e.target.value;
       localStorage.setItem(STORAGE_KEY_SCENE, this.params.scene);
-      await this.reloadScene();
+      if (this.setSimStatus) this.setSimStatus('loading');
+      try {
+        await this.reloadScene();
+        if (this.setSimStatus) this.setSimStatus('ready');
+      } catch (err) {
+        if (this.setSimStatus) this.setSimStatus('error');
+      }
     });
 
-    // Live plot toggle
+    // Live plot toggle (floating overlay button)
     const plotBtn = document.getElementById('plot-toggle-button');
-    if (plotBtn) plotBtn.addEventListener('click', () => this.livePlotter.toggle());
+    if (plotBtn) plotBtn.addEventListener('click', () => {
+      this.livePlotter.toggle();
+      plotBtn.classList.toggle('active', !!this.livePlotter.visible);
+    });
 
-    // Pause button
+    // Pause / Play toggle
     const pauseButton = document.getElementById('pause-button');
     if (pauseButton) pauseButton.addEventListener('click', () => {
       this.params.paused = !this.params.paused;
       pauseButton.textContent = this.params.paused ? '▶' : '⏸';
       pauseButton.classList.toggle('active', this.params.paused);
+      pauseButton.setAttribute('title', this.params.paused ? 'Play (Space)' : 'Pause (Space)');
     });
 
-    // Reset button
+    // Reset robot
     const resetBtn = document.getElementById('reset-button');
     if (resetBtn) resetBtn.addEventListener('click', () => {
       if (this.simulation) {
@@ -137,18 +179,130 @@ export class RoboSpaceDemo {
         this.simulation.forward();
       }
     });
+  }
 
-    // Reload button
-    const reloadBtn = document.getElementById('reload-button');
-    if (reloadBtn) reloadBtn.addEventListener('click', async () => {
-      await this.reloadScene();
-    });
+  setupProgramControls() {
+    // Kebab dropdown menu (Examples / Reset code / Reload Env)
+    const menuBtn = document.getElementById('ide-menu-btn');
+    const dropdown = document.getElementById('ide-menu-dropdown');
+    const importBtn = document.getElementById('ide-import-btn');
+    const importInput = document.getElementById('ide-import-file');
+    const saveBtn = document.getElementById('save-python');
 
+    const closeMenu = () => {
+      if (!dropdown) return;
+      dropdown.hidden = true;
+      if (menuBtn) menuBtn.setAttribute('aria-expanded', 'false');
+    };
+    const openMenu = () => {
+      if (!dropdown) return;
+      dropdown.hidden = false;
+      if (menuBtn) menuBtn.setAttribute('aria-expanded', 'true');
+    };
+
+    if (menuBtn && dropdown) {
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.hidden ? openMenu() : closeMenu();
+      });
+      document.addEventListener('click', (e) => {
+        if (!dropdown.hidden && !dropdown.contains(e.target) && e.target !== menuBtn) closeMenu();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !dropdown.hidden) closeMenu();
+      });
+
+      // Dropdown actions
+      dropdown.addEventListener('click', async (e) => {
+        const item = e.target.closest('[data-action]');
+        if (!item) return;
+        closeMenu();
+        const action = item.dataset.action;
+        if (action === 'reset-code') {
+          if (window.resetPythonScript) window.resetPythonScript();
+        } else if (action === 'reload-env') {
+          if (this.setSimStatus) this.setSimStatus('loading');
+          try {
+            await this.reloadScene();
+            if (this.setSimStatus) this.setSimStatus('ready');
+          } catch (err) {
+            if (this.setSimStatus) this.setSimStatus('error');
+          }
+        }
+      });
+    }
+
+    // Populate Examples list (deferred until pythonIntegration loads)
+    this._populateExamplesWhenReady();
+
+    // Import Script
+    if (importBtn && importInput) {
+      importBtn.addEventListener('click', () => importInput.click());
+      importInput.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          if (window.setPythonScript) window.setPythonScript(text);
+        } catch (err) {
+          this.showError(`Failed to import "${file.name}": ${this.formatError(err)}`);
+        } finally {
+          importInput.value = ''; // allow re-selecting the same file
+        }
+      });
+    }
+
+    // Save Script — download current editor content as .py
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => {
+        const code = window.getPythonScript ? window.getPythonScript() : '';
+        const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15); // YYYYMMDD-HHMMSS
+        const filename = `robospace-script-${ts.slice(0, 8)}-${ts.slice(9, 15)}.py`;
+        const blob = new Blob([code], { type: 'text/x-python;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      });
+    }
+  }
+
+  async _populateExamplesWhenReady() {
+    try {
+      const { PYTHON_EXAMPLES } = await import('./pythonIntegration.js');
+      const host = document.getElementById('ide-examples-list');
+      if (!host || !PYTHON_EXAMPLES) return;
+      const labels = {
+        basic_control:   'Basic Control',
+        sine_wave:       'Sine Wave',
+        walking_pattern: 'Walking Pattern',
+        pd_control:      'PD Controller',
+        oscillation:     'Multi-freq Oscillation',
+        info:            'Print System Info',
+      };
+      Object.entries(labels).forEach(([key, label]) => {
+        if (!PYTHON_EXAMPLES[key]) return;
+        const btn = document.createElement('button');
+        btn.className = 'ide-dropdown-item';
+        btn.setAttribute('role', 'menuitem');
+        btn.textContent = label;
+        btn.addEventListener('click', () => {
+          if (window.setPythonScript) window.setPythonScript(PYTHON_EXAMPLES[key]);
+        });
+        host.appendChild(btn);
+      });
+    } catch (e) {
+      console.warn('Failed to populate Examples list:', e);
+    }
   }
 
   async setupPythonIntegration() {
     // Initialize Pyodide
-    if (window.pyodide) return; // Already loaded
+    if (window.pyodide) { this._markReady('python'); return; }
 
     try {
       window.pyodide = await loadPyodide({
@@ -164,6 +318,8 @@ export class RoboSpaceDemo {
       await this.initializePythonEnvironment();
     } catch (error) {
       console.error("Failed to load Pyodide:", error);
+    } finally {
+      this._markReady('python');
     }
   }
 
@@ -214,8 +370,10 @@ export class RoboSpaceDemo {
       [this.model, this.state, this.simulation, this.bodies, this.lights] =
         await loadSceneFromURL(mujoco, initialScene, this);
       this.clearError();
+      this._markReady('scene');
     } catch (error) {
       this.showError(`Failed to initialize scene "${initialScene}": ${this.formatError(error)}`);
+      if (this.setSimStatus) this.setSimStatus('error');
       throw error;
     }
   }
@@ -274,13 +432,16 @@ export class RoboSpaceDemo {
     switch (e.key) {
       case ' ':
         e.preventDefault();
-        document.getElementById('pause-button').click();
+        document.getElementById('pause-button')?.click();
         break;
       case 'r': case 'R':
-        document.getElementById('reset-button').click();
+        document.getElementById('reset-button')?.click();
         break;
       case 'e': case 'E':
-        document.getElementById('reload-button').click();
+        if (this.setSimStatus) this.setSimStatus('loading');
+        this.reloadScene()
+          .then(() => this.setSimStatus && this.setSimStatus('ready'))
+          .catch(() => this.setSimStatus && this.setSimStatus('error'));
         break;
     }
   }

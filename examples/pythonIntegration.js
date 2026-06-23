@@ -103,14 +103,11 @@ export async function initializePythonEnvironment(demo) {
             return Array.from(demo.simulation.qvel);
         };
 
-        // Setup Python output to go to the OUTPUT panel
+        // Setup Python output to go to the console panel
         window.pythonOutput = (text) => {
             const outputArea = document.getElementById('python-output');
             if (outputArea) {
                 const line = document.createElement('div');
-                line.style.color = '#0f0';
-                line.style.fontFamily = 'monospace';
-                line.style.fontSize = '12px';
                 line.style.whiteSpace = 'pre-wrap';
                 line.textContent = text;
                 outputArea.appendChild(line);
@@ -482,14 +479,7 @@ export function setupPythonIDE(demo) {
     const codeArea = document.getElementById('python-code');        // hidden fallback
     const outputArea = document.getElementById('python-output');
     const editorHost = document.getElementById('python-code-editor');
-
-    // Inject Stop button next to Run
-    const stopButton = document.createElement('button');
-    stopButton.id = 'stop-python';
-    stopButton.className = 'ide-button stop';
-    stopButton.textContent = '⏹ STOP';
-    stopButton.style.display = 'none';
-    runButton.insertAdjacentElement('afterend', stopButton);
+    const stopButton = document.getElementById('stop-python');
 
     // ── CodeMirror editor ──────────────────────────────────────
     const savedScript = localStorage.getItem(STORAGE_KEY_SCRIPT);
@@ -499,15 +489,23 @@ export function setupPythonIDE(demo) {
     try {
         _editor = createCodeEditor(editorHost, initialScript);
     } catch (e) {
-        // Fallback: show plain textarea if CM fails to load
         console.warn('CodeMirror failed to load, falling back to textarea:', e);
         editorHost.style.display = 'none';
         codeArea.style.display = '';
         codeArea.value = initialScript;
     }
 
-    /** Get current script text regardless of editor type. */
     const getCode = () => _editor ? _editor.getValue() : codeArea.value;
+    const setCode = (text) => {
+        if (_editor) _editor.setValue(text);
+        else codeArea.value = text;
+        localStorage.setItem(STORAGE_KEY_SCRIPT, text);
+    };
+
+    // Expose getter/setter/reset for top-level controls (Save, Import, Reset)
+    window.getPythonScript = getCode;
+    window.setPythonScript = setCode;
+    window.resetPythonScript = () => setCode(DEFAULT_SCRIPT);
 
     // Persist script on every keystroke (debounced 500 ms)
     let _saveTimer = null;
@@ -518,29 +516,24 @@ export function setupPythonIDE(demo) {
         }, 500);
     };
     if (_editor) {
-        // CodeMirror fires DOM input events on its content div
         editorHost.addEventListener('input', _onInput);
-        // Also hook keydown for Ctrl+Enter / Escape
         _editor.addKeyHandler((e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runButton.click(); }
-            if (e.key === 'Escape') stopButton.click();
+            if (e.key === 'Escape' && stopButton && stopButton.style.display !== 'none') stopButton.click();
         });
     } else {
         codeArea.addEventListener('input', _onInput);
     }
 
     // Clear output
-    clearButton.addEventListener('click', () => {
-        outputArea.innerHTML = '<div class="output-label">OUTPUT</div>';
+    if (clearButton) clearButton.addEventListener('click', () => {
+        outputArea.innerHTML = '';
     });
 
     // Stop button — sends SIGINT to Pyodide
-    stopButton.addEventListener('click', () => {
-        if (_interruptBuffer) {
-            _interruptBuffer[0] = 2; // SIGINT
-        }
-        // Soft fallback: flag checked by yield_control()
-        window._pythonShouldStop = true;
+    if (stopButton) stopButton.addEventListener('click', () => {
+        if (_interruptBuffer) _interruptBuffer[0] = 2; // SIGINT
+        window._pythonShouldStop = true; // soft fallback
     });
 
     // Run Python code
@@ -553,24 +546,20 @@ export function setupPythonIDE(demo) {
         const code = getCode();
         if (!code.trim()) return;
 
-        // Reset interrupt state
         if (_interruptBuffer) _interruptBuffer[0] = 0;
         window._pythonShouldStop = false;
 
-        outputArea.innerHTML = '<div class="output-label">OUTPUT</div>';
+        outputArea.innerHTML = '';
         window.pythonOutput("Running...\n");
         _setRunning(true);
+        if (window.setSimStatus) window.setSimStatus('running');
 
         try {
-            // Load packages that might be imported in the code
             await window.pyodide.loadPackagesFromImports(code);
-
-            // Run the code — async so the browser can process events between microtasks
             await window.pyodide.runPythonAsync(code);
             window.pythonOutput("\n✓ Execution completed");
         } catch (error) {
             const msg = error.message || String(error);
-            // KeyboardInterrupt is expected when user clicks Stop
             if (msg.includes('KeyboardInterrupt') || msg.includes('PythonError')) {
                 window.pythonOutput("\n⏹ Stopped by user");
             } else {
@@ -580,14 +569,15 @@ export function setupPythonIDE(demo) {
         } finally {
             _setRunning(false);
             window._pythonShouldStop = false;
+            if (window.setSimStatus) window.setSimStatus('ready');
         }
     });
 
     // Keyboard shortcut for plain textarea fallback
-    if (!_editor) {
+    if (!_editor && stopButton) {
         codeArea.addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runButton.click(); }
-            if (e.key === 'Escape') stopButton.click();
+            if (e.key === 'Escape' && stopButton.style.display !== 'none') stopButton.click();
         });
     }
 }
