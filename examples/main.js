@@ -89,8 +89,6 @@ export class RoboSpaceDemo {
     this.onWindowResize();
 
     this.fileUploadManager = new FileUploadManager(this.mujoco, this);
-    // Upload Robot UI is omitted from the new layout; re-introduce via the
-    // Program panel kebab menu when needed (FileUploadManager class still works).
 
     this.livePlotter = new LivePlotter();
   }
@@ -146,13 +144,7 @@ export class RoboSpaceDemo {
     sceneSelector.addEventListener('change', async (e) => {
       this.params.scene = e.target.value;
       localStorage.setItem(STORAGE_KEY_SCENE, this.params.scene);
-      if (this.setSimStatus) this.setSimStatus('loading');
-      try {
-        await this.reloadScene();
-        if (this.setSimStatus) this.setSimStatus('ready');
-      } catch (err) {
-        if (this.setSimStatus) this.setSimStatus('error');
-      }
+      try { await this.reloadScene(); } catch (err) { /* status handled in reloadScene */ }
     });
 
     // Live plot toggle (floating overlay button)
@@ -178,6 +170,12 @@ export class RoboSpaceDemo {
         this.simulation.resetData();
         this.simulation.forward();
       }
+    });
+
+    // Upload Robot (next to scene selector)
+    const uploadBtn = document.getElementById('upload-robot-btn');
+    if (uploadBtn) uploadBtn.addEventListener('click', () => {
+      if (this.fileUploadManager) this.fileUploadManager.openDialog();
     });
   }
 
@@ -221,13 +219,7 @@ export class RoboSpaceDemo {
         if (action === 'reset-code') {
           if (window.resetPythonScript) window.resetPythonScript();
         } else if (action === 'reload-env') {
-          if (this.setSimStatus) this.setSimStatus('loading');
-          try {
-            await this.reloadScene();
-            if (this.setSimStatus) this.setSimStatus('ready');
-          } catch (err) {
-            if (this.setSimStatus) this.setSimStatus('error');
-          }
+          try { await this.reloadScene(); } catch (err) { /* status handled in reloadScene */ }
         }
       });
     }
@@ -325,6 +317,7 @@ export class RoboSpaceDemo {
 
   async reloadScene() {
     this.clearError();
+    if (this.setSimStatus) this.setSimStatus('loading');
 
     // Delete the old scene and load the new scene
     this.scene.remove(this.scene.getObjectByName("MuJoCo Root"));
@@ -335,6 +328,7 @@ export class RoboSpaceDemo {
       this.simulation.forward();
     } catch (error) {
       this.showError(`Failed to load scene "${this.params.scene}": ${this.formatError(error)}`);
+      if (this.setSimStatus) this.setSimStatus('error');
       throw error;
     }
 
@@ -359,6 +353,8 @@ export class RoboSpaceDemo {
     this.camera.position.set(2.0, 1.7, 1.7);
     this.controls.target.set(0, 0.7, 0);
     this.controls.update();
+
+    if (this.setSimStatus) this.setSimStatus('ready');
   }
 
   async init() {
@@ -438,10 +434,7 @@ export class RoboSpaceDemo {
         document.getElementById('reset-button')?.click();
         break;
       case 'e': case 'E':
-        if (this.setSimStatus) this.setSimStatus('loading');
-        this.reloadScene()
-          .then(() => this.setSimStatus && this.setSimStatus('ready'))
-          .catch(() => this.setSimStatus && this.setSimStatus('error'));
+        this.reloadScene().catch(() => { /* status handled in reloadScene */ });
         break;
     }
   }

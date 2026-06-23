@@ -7,125 +7,104 @@ export class FileUploadManager {
       this.currentUploadPath = null;
     }
   
-    createUploadInterface() {
-      // Guard against being called more than once
-      if (document.getElementById('upload-robot-button')) return;
+    /** Idempotently appends the themed upload modal to <body>. No toolbar injection. */
+    ensureDialog() {
+      if (document.getElementById('upload-dialog')) return;
 
-      const toolbar = document.getElementById('toolbar');
-      
-      // Create a new toolbar section for upload
-      const uploadSection = document.createElement('div');
-      uploadSection.className = 'toolbar-section';
-      uploadSection.innerHTML = `
-        <button id="upload-robot-button" class="toolbar-button">📁 Upload Robot</button>
-        <span id="upload-status" class="toolbar-value" style="display: none;"></span>
-      `;
-      
-      // Insert after the first toolbar section inside the collapsible wrapper
-      const collapsible = document.getElementById('toolbar-collapsible') || toolbar;
-      const sceneSection = collapsible.querySelector('.toolbar-section');
-      collapsible.insertBefore(uploadSection, sceneSection.nextSibling);
-      
-      // Create hidden file inputs
+      // Hidden file inputs
       const xmlInput = document.createElement('input');
       xmlInput.type = 'file';
       xmlInput.accept = '.xml';
       xmlInput.style.display = 'none';
       document.body.appendChild(xmlInput);
-      
+
       const assetsInput = document.createElement('input');
       assetsInput.type = 'file';
       assetsInput.accept = '.xml,.stl,.obj,.png,.jpg,.jpeg';
       assetsInput.multiple = true;
       assetsInput.style.display = 'none';
       document.body.appendChild(assetsInput);
-      
-      // Create upload dialog
+
+      // Modal markup using the new dark-palette classes (see style.css .upload-modal*)
       const uploadDialog = document.createElement('div');
       uploadDialog.id = 'upload-dialog';
-      uploadDialog.style.cssText = `
-        display: none;
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: #2a2a2a;
-        border: 2px solid #0a7fff;
-        border-radius: 8px;
-        padding: 20px;
-        z-index: 2000;
-        color: #fff;
-        min-width: 400px;
-      `;
+      uploadDialog.className = 'upload-modal';
+      uploadDialog.style.display = 'none';
       uploadDialog.innerHTML = `
-        <h3 style="margin-top: 0; color: #0a7fff;">Upload Robot Files</h3>
-        <div id="upload-instructions" style="margin: 15px 0; line-height: 1.5;">
-          <p><strong>Step 1:</strong> Upload your scene XML file</p>
-          <button id="select-xml-btn" class="toolbar-button" style="margin: 10px 0;">Select Scene XML</button>
-          <div id="xml-status" style="color: #888; margin: 5px 0;"></div>
-          
-          <p style="margin-top: 15px;"><strong>Step 2:</strong> Upload referenced files (if any)</p>
-          <div id="required-files" style="color: #ff9800; margin: 10px 0; display: none;"></div>
-          <button id="select-assets-btn" class="toolbar-button" style="margin: 10px 0;" disabled>Select Asset Files</button>
-          <div id="assets-status" style="color: #888; margin: 5px 0;"></div>
-        </div>
-        <div style="text-align: right; margin-top: 20px;">
-          <button id="load-robot-btn" class="toolbar-button" style="background: #0a7fff;" disabled>Load Robot</button>
-          <button id="cancel-upload-btn" class="toolbar-button" style="margin-left: 10px;">Cancel</button>
+        <div class="upload-modal-panel">
+          <div class="upload-modal-header">
+            <span class="upload-modal-title">Upload Robot Files</span>
+            <button type="button" id="cancel-upload-btn" class="upload-modal-close" aria-label="Close">✕</button>
+          </div>
+          <div class="upload-modal-body">
+            <div class="upload-modal-step">
+              <div class="upload-modal-step-label"><strong>Step 1</strong> · Upload your scene XML file</div>
+              <button type="button" id="select-xml-btn" class="ide-button save">Select Scene XML</button>
+              <div id="xml-status" class="upload-modal-status"></div>
+            </div>
+            <div class="upload-modal-step">
+              <div class="upload-modal-step-label"><strong>Step 2</strong> · Upload referenced assets (if any)</div>
+              <div id="required-files" class="upload-modal-required" style="display:none"></div>
+              <button type="button" id="select-assets-btn" class="ide-button save" disabled>Select Asset Files</button>
+              <div id="assets-status" class="upload-modal-status"></div>
+            </div>
+          </div>
+          <div class="upload-modal-footer">
+            <button type="button" id="cancel-upload-btn-secondary" class="ide-button save">Cancel</button>
+            <button type="button" id="load-robot-btn" class="ide-button run" disabled>Load Robot</button>
+          </div>
         </div>
       `;
       document.body.appendChild(uploadDialog);
-      
-      // Upload button click handler
-      document.getElementById('upload-robot-button').addEventListener('click', () => {
-        uploadDialog.style.display = 'block';
-        this.resetUploadState();
-      });
-      
-      // Select XML button
-      document.getElementById('select-xml-btn').addEventListener('click', () => {
-        xmlInput.click();
-      });
-      
-      // Select assets button
-      document.getElementById('select-assets-btn').addEventListener('click', () => {
-        assetsInput.click();
-      });
-      
-      // Cancel button
-      document.getElementById('cancel-upload-btn').addEventListener('click', () => {
+
+      // Both ✕ and the footer Cancel close the modal and reset state
+      const closeModal = () => {
         uploadDialog.style.display = 'none';
         this.resetUploadState();
+      };
+      document.getElementById('cancel-upload-btn').addEventListener('click', closeModal);
+      document.getElementById('cancel-upload-btn-secondary').addEventListener('click', closeModal);
+
+      // Click outside the panel to close
+      uploadDialog.addEventListener('click', (e) => {
+        if (e.target === uploadDialog) closeModal();
       });
-      
-      // Load robot button
+
+      document.getElementById('select-xml-btn').addEventListener('click', () => xmlInput.click());
+      document.getElementById('select-assets-btn').addEventListener('click', () => assetsInput.click());
+
       document.getElementById('load-robot-btn').addEventListener('click', async () => {
-        await this.loadUploadedScene();
-        uploadDialog.style.display = 'none';
+        try {
+          await this.loadUploadedScene();
+        } finally {
+          uploadDialog.style.display = 'none';
+        }
       });
-      
-      // Handle XML upload
+
       xmlInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
-        if (file) {
-          await this.handleXMLUpload(file);
-        }
+        if (file) await this.handleXMLUpload(file);
       });
-      
-      // Handle assets upload
+
       assetsInput.addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
-        if (files.length > 0) {
-          await this.handleAssetsUpload(files);
-        }
+        if (files.length > 0) await this.handleAssetsUpload(files);
       });
+    }
+
+    /** Shows the modal in a freshly reset state. */
+    openDialog() {
+      this.ensureDialog();
+      this.resetUploadState();
+      const uploadDialog = document.getElementById('upload-dialog');
+      if (uploadDialog) uploadDialog.style.display = 'flex';
     }
   
     async handleXMLUpload(file) {
       try {
         const xmlStatus = document.getElementById('xml-status');
         xmlStatus.textContent = `Selected: ${file.name}`;
-        xmlStatus.style.color = '#4CAF50';
+        xmlStatus.style.color = '#22c55e';
         
         const content = await this.readFileAsText(file);
         
@@ -195,7 +174,7 @@ export class FileUploadManager {
       }
       
       assetsStatus.textContent = `Uploaded ${files.length} file(s)`;
-      assetsStatus.style.color = '#4CAF50';
+      assetsStatus.style.color = '#22c55e';
       this.refreshRequiredFilesUI(sceneInfo);
     }
   
@@ -328,7 +307,7 @@ export class FileUploadManager {
       requiredFiles.innerHTML = '<strong>Required files:</strong><br>' +
         allFiles.map(file => {
           const isLoaded = !missingFiles.includes(file);
-          const color = isLoaded ? '#4CAF50' : '#ff9800';
+          const color = isLoaded ? '#22c55e' : '#f5a524';
           const marker = isLoaded ? '✓' : '•';
           return `<span style="color: ${color};">${marker} ${file}</span>`;
         }).join('<br>');

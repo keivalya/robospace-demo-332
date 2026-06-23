@@ -41,6 +41,9 @@
         <div class="toolbar-section toolbar-section-scene">
             <label class="toolbar-label">Scene</label>
             <select id="scene-selector" class="toolbar-select"></select>
+            <button type="button" id="upload-robot-btn" class="toolbar-btn" title="Upload custom robot scene">
+                <span class="toolbar-btn-icon">📁</span><span class="toolbar-btn-label">Upload Robot</span>
+            </button>
         </div>
         <div class="toolbar-spacer"></div>
         <div id="sim-status" class="sim-status loading" role="status" aria-live="polite">
@@ -48,6 +51,20 @@
             <span class="sim-status-label">Simulation Loading…</span>
         </div>
         <div class="toolbar-spacer"></div>
+        <div class="toolbar-section toolbar-section-program">
+            <button type="button" id="ide-import-btn" class="ide-icon-btn" title="Import script from file" aria-label="Import script">📄</button>
+            <button type="button" id="ide-menu-btn" class="ide-icon-btn" title="More options" aria-label="More options" aria-haspopup="true" aria-expanded="false">⋯</button>
+            <div id="ide-menu-dropdown" class="ide-dropdown" hidden role="menu">
+                <div class="ide-dropdown-section" data-section="examples">
+                    <div class="ide-dropdown-section-label">Examples</div>
+                    <div id="ide-examples-list"></div>
+                </div>
+                <div class="ide-dropdown-divider"></div>
+                <button class="ide-dropdown-item" data-action="reset-code" role="menuitem">Reset code to default</button>
+                <button class="ide-dropdown-item" data-action="reload-env" role="menuitem">↺ Reload Env</button>
+            </div>
+            <input type="file" id="ide-import-file" accept=".py,text/x-python" style="display:none" />
+        </div>
     </div>
 
     <!-- Keyboard Shortcut Help Overlay -->
@@ -122,7 +139,7 @@
                 <button id="pause-button" class="sim-control" title="Pause/Play (Space)" aria-label="Pause or play simulation">⏸</button>
                 <button id="reset-button" class="sim-control" title="Reset robot (R)" aria-label="Reset robot">↺</button>
             </div>
-            <script type="module" src="./examples/main.js?v=8"></script>
+            <script type="module" src="./examples/main.js?v=11"></script>
         </div>
 
         <!-- Vertical divider -->
@@ -130,23 +147,6 @@
 
         <!-- Program panel (right, ~40%) -->
         <div id="python-ide">
-            <div class="ide-header">
-                <div class="ide-title">Program</div>
-                <div class="ide-controls">
-                    <button type="button" id="ide-import-btn" class="ide-icon-btn" title="Import script from file" aria-label="Import script">📄</button>
-                    <button type="button" id="ide-menu-btn" class="ide-icon-btn" title="More options" aria-label="More options" aria-haspopup="true" aria-expanded="false">⋯</button>
-                    <div id="ide-menu-dropdown" class="ide-dropdown" hidden role="menu">
-                        <div class="ide-dropdown-section" data-section="examples">
-                            <div class="ide-dropdown-section-label">Examples</div>
-                            <div id="ide-examples-list"></div>
-                        </div>
-                        <div class="ide-dropdown-divider"></div>
-                        <button class="ide-dropdown-item" data-action="reset-code" role="menuitem">Reset code to default</button>
-                        <button class="ide-dropdown-item" data-action="reload-env" role="menuitem">↺ Reload Env</button>
-                    </div>
-                </div>
-            </div>
-
             <div id="python-editor-container">
                 <div id="python-code-editor"></div>
                 <textarea id="python-code" style="display:none"></textarea>
@@ -167,8 +167,6 @@
                 <button id="run-python" class="ide-button run" title="Run script (Ctrl+Enter)">▶ Run</button>
                 <button id="stop-python" class="ide-button stop" title="Stop running script (Esc)" style="display:none">⏹ Stop</button>
             </div>
-
-            <input type="file" id="ide-import-file" accept=".py,text/x-python" style="display:none" />
         </div>
     </div>
 
