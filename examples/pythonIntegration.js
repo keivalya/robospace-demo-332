@@ -18,9 +18,20 @@ export async function initializePythonEnvironment(demo) {
 
         window.setControl = (ctrlArray) => {
             if (!demo.simulation) return;
-            const ctrl = Array.isArray(ctrlArray) ? ctrlArray : JSON.parse(ctrlArray);
+            // Normalize input: Pyodide passes Python lists as PyProxy (not Array).
+            // Accept Array, PyProxy, iterable, or JSON string.
+            let ctrl;
+            if (Array.isArray(ctrlArray)) {
+                ctrl = ctrlArray;
+            } else if (typeof ctrlArray === 'string') {
+                ctrl = JSON.parse(ctrlArray);
+            } else if (ctrlArray && typeof ctrlArray.toJs === 'function') {
+                ctrl = ctrlArray.toJs();
+            } else {
+                ctrl = Array.from(ctrlArray);
+            }
             for (let i = 0; i < Math.min(ctrl.length, demo.model.nu); i++) {
-                demo.simulation.ctrl[i] = ctrl[i];
+                demo.simulation.ctrl[i] = Number(ctrl[i]);
             }
         };
 
@@ -192,24 +203,6 @@ export async function initializePythonEnvironment(demo) {
             return names;
         };
 
-        // Physical robot connection functions
-        window.connectRobot = async () => {
-            if (demo.robotConnection) {
-                return await demo.robotConnection.connect();
-            }
-            return false;
-        };
-
-        window.disconnectRobot = async () => {
-            if (demo.robotConnection) {
-                await demo.robotConnection.disconnect();
-            }
-        };
-
-        window.setRobotSync = (enabled) => {
-            demo.robotSyncEnabled = enabled;
-        };
-
         // Set up interrupt buffer so Stop button can kill long-running scripts
         _setupInterruptBuffer();
 
@@ -217,6 +210,7 @@ export async function initializePythonEnvironment(demo) {
         await window.pyodide.runPythonAsync(`
 import numpy as np
 from js import window
+from pyodide.ffi import to_js
 import json
 import math
 import sys
@@ -268,7 +262,9 @@ def set_control(ctrl):
     """Set control values for all actuators"""
     if isinstance(ctrl, np.ndarray):
         ctrl = ctrl.tolist()
-    window.setControl(ctrl)
+    # Explicitly convert to a JS Array — Pyodide 0.23 otherwise wraps
+    # Python lists as PyProxy, which the JS bridge can't index directly.
+    window.setControl(to_js(ctrl))
 
 def get_control():
     """Get current control values"""
@@ -406,19 +402,6 @@ def print_sensors():
             print(f"  [{i}] {names[i]:20s} = {value:.4f}")
     
     print_cameras()
-
-# Robot connection functions
-def connect_robot():
-    """Connect to physical robot via serial"""
-    return window.connectRobot()
-
-def disconnect_robot():
-    """Disconnect from physical robot"""
-    window.disconnectRobot()
-
-def enable_robot_sync(enabled=True):
-    """Enable/disable position synchronization"""
-    window.setRobotSync(enabled)
 
 print("RoboSpace")
 print("  get_num_actuators()  - Get number of actuators")

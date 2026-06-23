@@ -901,13 +901,6 @@ kbd {
     color: #ddd;
 }
 
-#connection-status {
-    font-weight: 600;
-    padding: 4px 8px;
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.3);
-}
-
 /* ── Touch / coarse-pointer tap targets (min 44×44px) ───────
    Applied only on devices where the primary pointer is coarse
    (touchscreen). Mouse users are unaffected.                  */
