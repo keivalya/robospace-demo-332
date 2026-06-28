@@ -98,7 +98,6 @@ export class RoboSpaceDemo {
 
     this.livePlotter = new LivePlotter();
 
-    this.parentBridge = new ParentBridge(this);
     window._roboDemo = this;
   }
 
@@ -393,6 +392,9 @@ export class RoboSpaceDemo {
 
     this._loadQueue = nextPromise.catch(() => {});
     await nextPromise;
+
+    // Initialize ParentBridge after initial scene loading is complete to avoid race conditions.
+    this.parentBridge = new ParentBridge(this);
   }
 
   async initializePythonEnvironment() {
