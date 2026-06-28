@@ -227,6 +227,7 @@ export class FileUploadManager {
       this.parentContext.params.scene = sceneInfo.xmlPath;
       try {
         await this.parentContext.reloadScene();
+        this.parentContext.parentBridge?.emitDirty('assets');
       } catch (error) {
         console.error('Error loading uploaded scene:', error);
         throw error;

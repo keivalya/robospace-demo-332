@@ -9,7 +9,10 @@ import { Reflector  } from './utils/Reflector.js';
 
 export async function reloadFunc() {
   // Delete the old scene and load the new scene
-  this.scene.remove(this.scene.getObjectByName("MuJoCo Root"));
+  const oldRoot = this.scene.getObjectByName("MuJoCo Root");
+  if (oldRoot && oldRoot.parent) {
+    oldRoot.parent.remove(oldRoot);
+  }
   [this.model, this.state, this.simulation, this.bodies, this.lights] =
     await loadSceneFromURL(this.mujoco, this.params.scene, this);
   this.simulation.forward();
@@ -280,6 +283,37 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
       parent.simulation = null;
     }
 
+    const cleanUpRoot = (rootObj) => {
+      if (!rootObj) return;
+      rootObj.traverse((node) => {
+        if (node.isMesh || node.isLine || node.isPoints) {
+          if (node.geometry) node.geometry.dispose();
+          if (node.material) {
+            if (Array.isArray(node.material)) {
+              node.material.forEach((m) => m.dispose());
+            } else {
+              node.material.dispose();
+            }
+          }
+        }
+      });
+      if (rootObj.parent) {
+        rootObj.parent.remove(rootObj);
+      }
+    };
+
+    // Clean up any existing MuJoCo Root group in the three.js scene.
+    const toRemove = [];
+    parent.scene.traverse((node) => {
+      if (node.name === "MuJoCo Root") {
+        toRemove.push(node);
+      }
+    });
+    for (const rootObj of toRemove) {
+      cleanUpRoot(rootObj);
+    }
+    parent.mujocoRoot = null;
+
     // Load in the state from XML.
     parent.model       = mujoco.Model.load_from_xml("/working/"+filename);
     parent.state       = new mujoco.State(parent.model);
@@ -519,6 +553,11 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
       } else {
         light = new THREE.SpotLight();
       }
+
+      // Use the diffuse color specified in the MuJoCo model
+      const diffuse = model.light_diffuse.subarray(l * 3, (l + 1) * 3);
+      light.color.setRGB(diffuse[0], diffuse[1], diffuse[2]);
+
       light.decay = model.light_attenuation[l] * 100;
       light.penumbra = 0.5;
       light.castShadow = true; // default false

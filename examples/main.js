@@ -6,6 +6,7 @@ import { downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaterni
 import load_mujoco from '../dist/mujoco_wasm.js';
 import { FileUploadManager } from './utils/FileUploadManager.js';
 import { LivePlotter } from './utils/LivePlotter.js';
+import { ParentBridge } from './utils/ParentBridge.js';
 
 const loadPyodide = window.loadPyodide;
 // Load the MuJoCo Module
@@ -14,6 +15,9 @@ const mujoco = await load_mujoco();
 // Set up Emscripten's Virtual File System
 const STORAGE_KEY_SCENE = 'robospace_last_scene';
 var initialScene = localStorage.getItem(STORAGE_KEY_SCENE) || "universal_robots_ur5e/scene.xml";
+if (initialScene.startsWith("custom_scenes/")) {
+  initialScene = "universal_robots_ur5e/scene.xml";
+}
 mujoco.FS.mkdir('/working');
 mujoco.FS.mount(mujoco.MEMFS, { root: '.' }, '/working');
 await downloadExampleScenesFolder(mujoco);
@@ -22,6 +26,7 @@ mujoco.FS.writeFile("/working/" + initialScene, await (await fetch("./examples/s
 export class RoboSpaceDemo {
   constructor() {
     this.mujoco = mujoco;
+    this._loadQueue = Promise.resolve();
 
     // Load in the state from XML
     this.model = new mujoco.Model("/working/" + initialScene);
@@ -61,6 +66,7 @@ export class RoboSpaceDemo {
     this.scene.add(this.ambientLight);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.outputEncoding = THREE.sRGBEncoding;
     // Cap at 2× to avoid excessive GPU load on very high-DPI screens
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     // Initial size — will be corrected by onWindowResize() called below.
@@ -91,6 +97,9 @@ export class RoboSpaceDemo {
     this.fileUploadManager = new FileUploadManager(this.mujoco, this);
 
     this.livePlotter = new LivePlotter();
+
+    this.parentBridge = new ParentBridge(this);
+    window._roboDemo = this;
   }
 
   setupStatusIndicator() {
@@ -144,7 +153,10 @@ export class RoboSpaceDemo {
     sceneSelector.addEventListener('change', async (e) => {
       this.params.scene = e.target.value;
       localStorage.setItem(STORAGE_KEY_SCENE, this.params.scene);
-      try { await this.reloadScene(); } catch (err) { /* status handled in reloadScene */ }
+      try {
+        await this.reloadScene();
+        this.parentBridge?.emitDirty('scene');
+      } catch (err) { /* status handled in reloadScene */ }
     });
 
     // Live plot toggle (floating overlay button)
@@ -319,59 +331,68 @@ export class RoboSpaceDemo {
     this.clearError();
     if (this.setSimStatus) this.setSimStatus('loading');
 
-    // Delete the old scene and load the new scene
-    this.scene.remove(this.scene.getObjectByName("MuJoCo Root"));
-
-    try {
-      [this.model, this.state, this.simulation, this.bodies, this.lights] =
-        await loadSceneFromURL(this.mujoco, this.params.scene, this);
-      this.simulation.forward();
-    } catch (error) {
-      this.showError(`Failed to load scene "${this.params.scene}": ${this.formatError(error)}`);
-      if (this.setSimStatus) this.setSimStatus('error');
-      throw error;
-    }
-
-    // Update Python environment
-    if (window.pyodide) {
-      await this.updatePythonEnvironment();
-    }
-
-    // Update plotter labels from joint names
-    if (this.livePlotter && this.model) {
-      const decoder = new TextDecoder('utf-8');
-      const labels = [];
-      for (let i = 0; i < Math.min(this.model.njnt, 8); i++) {
-        const addr = this.model.name_jntadr[i];
-        const raw  = decoder.decode(this.model.names.subarray(addr));
-        labels.push(raw.split('\0')[0] || `j${i}`);
+    const nextPromise = this._loadQueue.then(async () => {
+      try {
+        [this.model, this.state, this.simulation, this.bodies, this.lights] =
+          await loadSceneFromURL(this.mujoco, this.params.scene, this);
+        this.simulation.forward();
+      } catch (error) {
+        this.showError(`Failed to load scene "${this.params.scene}": ${this.formatError(error)}`);
+        if (this.setSimStatus) this.setSimStatus('error');
+        throw error;
       }
-      this.livePlotter.setLabels(labels);
-    }
 
-    // Camera reset
-    this.camera.position.set(2.0, 1.7, 1.7);
-    this.controls.target.set(0, 0.7, 0);
-    this.controls.update();
+      // Update Python environment
+      if (window.pyodide) {
+        await this.updatePythonEnvironment();
+      }
 
-    if (this.setSimStatus) this.setSimStatus('ready');
+      // Update plotter labels from joint names
+      if (this.livePlotter && this.model) {
+        const decoder = new TextDecoder('utf-8');
+        const labels = [];
+        for (let i = 0; i < Math.min(this.model.njnt, 8); i++) {
+          const addr = this.model.name_jntadr[i];
+          const raw  = decoder.decode(this.model.names.subarray(addr));
+          labels.push(raw.split('\0')[0] || `j${i}`);
+        }
+        this.livePlotter.setLabels(labels);
+      }
+
+      // Camera reset — skipped when the parent bridge is restoring a saved camera
+      if (!this.parentBridge?.suppressCameraReset) {
+        this.camera.position.set(2.0, 1.7, 1.7);
+        this.controls.target.set(0, 0.7, 0);
+        this.controls.update();
+      }
+
+      if (this.setSimStatus) this.setSimStatus('ready');
+    });
+
+    this._loadQueue = nextPromise.catch(() => {});
+    await nextPromise;
   }
 
   async init() {
     // Download the the examples to MuJoCo's virtual file system
     await downloadExampleScenesFolder(mujoco);
 
-    try {
-      // Initialize the three.js Scene using the .xml Model in initialScene
-      [this.model, this.state, this.simulation, this.bodies, this.lights] =
-        await loadSceneFromURL(mujoco, initialScene, this);
-      this.clearError();
-      this._markReady('scene');
-    } catch (error) {
-      this.showError(`Failed to initialize scene "${initialScene}": ${this.formatError(error)}`);
-      if (this.setSimStatus) this.setSimStatus('error');
-      throw error;
-    }
+    const nextPromise = this._loadQueue.then(async () => {
+      try {
+        // Initialize the three.js Scene using the .xml Model in initialScene
+        [this.model, this.state, this.simulation, this.bodies, this.lights] =
+          await loadSceneFromURL(mujoco, initialScene, this);
+        this.clearError();
+        this._markReady('scene');
+      } catch (error) {
+        this.showError(`Failed to initialize scene "${initialScene}": ${this.formatError(error)}`);
+        if (this.setSimStatus) this.setSimStatus('error');
+        throw error;
+      }
+    });
+
+    this._loadQueue = nextPromise.catch(() => {});
+    await nextPromise;
   }
 
   async initializePythonEnvironment() {

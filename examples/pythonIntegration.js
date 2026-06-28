@@ -513,6 +513,7 @@ export function setupPythonIDE(demo) {
         clearTimeout(_saveTimer);
         _saveTimer = setTimeout(() => {
             localStorage.setItem(STORAGE_KEY_SCRIPT, getCode());
+            window._roboDemo?.parentBridge?.emitDirty('script');
         }, 500);
     };
     if (_editor) {
