@@ -339,7 +339,14 @@ export class ParentBridge {
     const defaultScene = 'universal_robots_ur5e/scene.xml';
     this.demo.params.scene = defaultScene;
     const sceneSelector = document.getElementById('scene-selector');
-    if (sceneSelector) sceneSelector.value = defaultScene;
+    if (sceneSelector) {
+      sceneSelector.innerHTML = '';
+      const option = document.createElement('option');
+      option.value = defaultScene;
+      option.textContent = 'Universal Robots UR5e';
+      sceneSelector.appendChild(option);
+      sceneSelector.value = defaultScene;
+    }
 
     this.suppressCameraReset = false;
     await this.demo.reloadScene();
@@ -398,11 +405,35 @@ export class ParentBridge {
   _ensureSceneOption(sceneName, xmlPath) {
     const sceneSelector = document.getElementById('scene-selector');
     if (!sceneSelector) return;
-    const exists = [...sceneSelector.options].some((o) => o.value === xmlPath);
-    if (exists) return;
+    
+    // Clear all existing options to ensure only one robot is visible!
+    sceneSelector.innerHTML = '';
+
+    // Extract robot name from XML if possible
+    let robotName = null;
+    try {
+      const FS = this.demo.mujoco.FS;
+      const fullXmlPath = `/working/${xmlPath.replace(/^\/+/, '')}`;
+      if (FS.analyzePath(fullXmlPath).exists) {
+        const xmlContent = FS.readFile(fullXmlPath, { encoding: 'utf8' });
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlContent, 'text/xml');
+        const mujocoElement = xmlDoc.querySelector('mujoco');
+        if (mujocoElement && mujocoElement.getAttribute('model')) {
+          robotName = mujocoElement.getAttribute('model').trim();
+        }
+      }
+    } catch (e) {
+      console.warn('[ParentBridge] failed to parse XML for robot name:', e);
+    }
+
+    if (!robotName) {
+      robotName = xmlPath.startsWith('custom_scenes/') ? `Custom: ${sceneName}` : sceneName;
+    }
+
     const option = document.createElement('option');
     option.value = xmlPath;
-    option.textContent = xmlPath.startsWith('custom_scenes/') ? `Custom: ${sceneName}` : sceneName;
+    option.textContent = robotName;
     sceneSelector.appendChild(option);
   }
 }

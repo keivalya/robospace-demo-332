@@ -125,12 +125,23 @@ export class FileUploadManager {
         // Write scene XML
         this.mujoco.FS.writeFile(`/working/${this.currentUploadPath}/scene.xml`, content);
         
+        // Get robot name from XML or fallback to filename
+        const mujocoElement = xmlDoc.querySelector('mujoco');
+        let robotName = mujocoElement ? mujocoElement.getAttribute('model') : null;
+        if (robotName) {
+          robotName = robotName.trim();
+        }
+        if (!robotName) {
+          robotName = file.name.replace('.xml', '');
+        }
+
         // Store info
         this.uploadedFiles.set(sceneName, {
           xmlPath: `${this.currentUploadPath}/scene.xml`,
           includes: new Set(references.includes),
           assets: new Set(references.assets),
-          loadedFiles: new Set()
+          loadedFiles: new Set(),
+          robotName: robotName
         });
 
         const sceneInfo = this.uploadedFiles.get(sceneName);
@@ -210,18 +221,16 @@ export class FileUploadManager {
       const sceneName = this.currentUploadPath.split('/')[1];
       const sceneInfo = this.uploadedFiles.get(sceneName);
       
-      // Add to scene selector
+      // Clear scene selector to show only the uploaded robot
       const sceneSelector = document.getElementById('scene-selector');
-      const existingOption = [...sceneSelector.options].find(
-        option => option.value === sceneInfo.xmlPath
-      );
-      if (!existingOption) {
+      if (sceneSelector) {
+        sceneSelector.innerHTML = '';
         const option = document.createElement('option');
         option.value = sceneInfo.xmlPath;
-        option.textContent = `Custom: ${sceneName}`;
+        option.textContent = sceneInfo.robotName || sceneName;
         sceneSelector.appendChild(option);
+        sceneSelector.value = sceneInfo.xmlPath;
       }
-      sceneSelector.value = sceneInfo.xmlPath;
       
       // Update params and reload
       this.parentContext.params.scene = sceneInfo.xmlPath;
