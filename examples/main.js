@@ -98,6 +98,7 @@ export class RoboSpaceDemo {
 
     this.livePlotter = new LivePlotter();
 
+    this.parentBridge = new ParentBridge(this);
     window._roboDemo = this;
   }
 
@@ -376,6 +377,13 @@ export class RoboSpaceDemo {
     // Download the the examples to MuJoCo's virtual file system
     await downloadExampleScenesFolder(mujoco);
 
+    // If the scene has already been changed to a custom scene by a snapshot load,
+    // do NOT load the default scene!
+    if (this.params.scene !== initialScene) {
+      this._markReady('scene');
+      return;
+    }
+
     const nextPromise = this._loadQueue.then(async () => {
       try {
         // Initialize the three.js Scene using the .xml Model in initialScene
@@ -392,9 +400,6 @@ export class RoboSpaceDemo {
 
     this._loadQueue = nextPromise.catch(() => {});
     await nextPromise;
-
-    // Initialize ParentBridge after initial scene loading is complete to avoid race conditions.
-    this.parentBridge = new ParentBridge(this);
   }
 
   async initializePythonEnvironment() {
