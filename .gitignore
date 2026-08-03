@@ -43,7 +43,10 @@
 include/divisible/*
 
 
-## Local 
+## Local
+
+# local AI assistant working notes
+CLAUDE.md
 
 .idea/*.xml
 

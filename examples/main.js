@@ -2,15 +2,79 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { DragStateManager } from './utils/DragStateManager.js';
-import { downloadExampleScenesFolder, loadSceneFromURL, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
+import { downloadExampleScenesFolder, loadSceneFromURL, compileModel, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
 import load_mujoco from '../dist/mujoco_wasm.js';
 import { FileUploadManager } from './utils/FileUploadManager.js';
 import { LivePlotter } from './utils/LivePlotter.js';
 import { ParentBridge } from './utils/ParentBridge.js';
+import { mujocoLogHooks } from './utils/mujocoLog.js';
+
+// index.html loads this module as `main.js?v=N`. Propagate that N to every
+// dynamic import() below so bumping the single number in index.html invalidates
+// the whole lazily-loaded graph, instead of leaving pythonIntegration.js,
+// sceneWriter.js and robotPacks.js served from cache after an edit.
+// (Statically imported modules still resolve without the query — for local dev
+// use `npm run dev`, which sends Cache-Control: no-store.)
+const MODULE_VERSION = (() => {
+  try { return new URL(import.meta.url).searchParams.get('v') || ''; } catch { return ''; }
+})();
+const versioned = (specifier) => (MODULE_VERSION ? `${specifier}?v=${MODULE_VERSION}` : specifier);
+
+// ─── bootstrap diagnostics ───────────────────────────────────────────────────
+// Everything below runs at module top level, so a single throw or a fetch that
+// never settles leaves the page blank with nothing to go on — which is a
+// miserable thing to debug and has already cost real time. Track the current
+// stage, surface any failure in the page itself, and time out rather than hang.
+
+let bootStage = 'starting';
+const setStage = (stage) => { bootStage = stage; window.__robospaceBootStage = stage; };
+
+function showBootError(what, detail) {
+  console.error(`[robospace] boot failed during "${bootStage}":`, detail);
+  const existing = document.getElementById('robospace-boot-error');
+  if (existing) return;
+  const box = document.createElement('div');
+  box.id = 'robospace-boot-error';
+  box.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#161a1f;color:#ffb4b4;'
+    + 'font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;padding:28px 32px;overflow:auto;';
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:15px;color:#fff;margin-bottom:14px;font-weight:600;';
+  title.textContent = `RoboSpace failed to start (during: ${bootStage})`;
+  const msg = document.createElement('pre');
+  msg.style.cssText = 'white-space:pre-wrap;word-break:break-word;margin:0 0 16px;';
+  msg.textContent = `${what}\n\n${detail && detail.stack ? detail.stack : String(detail)}`;
+  const hint = document.createElement('div');
+  hint.style.cssText = 'color:#9aa4b2;';
+  hint.textContent = 'If this mentions a blocked or failed script, check that the page is being served '
+    + 'without a Cross-Origin-Embedder-Policy header (npm run dev sends none), and that no older '
+    + 'server is still bound to the port.';
+  box.append(title, msg, hint);
+  (document.body || document.documentElement).appendChild(box);
+}
+
+window.addEventListener('error', (e) => showBootError('Uncaught error', e.error || e.message));
+window.addEventListener('unhandledrejection', (e) => showBootError('Unhandled promise rejection', e.reason));
+
+/** Rejects instead of hanging forever, so a stalled fetch is reported. */
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label} did not finish within ${ms / 1000}s. `
+          + 'Check the Network tab for a request that is still pending.')),
+        ms,
+      );
+    }),
+  ]);
+}
 
 const loadPyodide = window.loadPyodide;
-// Load the MuJoCo Module
-const mujoco = await load_mujoco();
+// Load the MuJoCo Module. The log hooks capture stdout/stderr, which is where
+// the XML compiler's diagnostics land — see utils/mujocoLog.js.
+setStage('loading MuJoCo WebAssembly');
+const mujoco = await load_mujoco(mujocoLogHooks);
 
 // Set up Emscripten's Virtual File System
 const STORAGE_KEY_SCENE = 'robospace_last_scene';
@@ -18,10 +82,23 @@ var initialScene = localStorage.getItem(STORAGE_KEY_SCENE) || "universal_robots_
 if (initialScene.startsWith("custom_scenes/")) {
   initialScene = "universal_robots_ur5e/scene.xml";
 }
+setStage('setting up the virtual filesystem');
 mujoco.FS.mkdir('/working');
 mujoco.FS.mount(mujoco.MEMFS, { root: '.' }, '/working');
-await downloadExampleScenesFolder(mujoco);
-mujoco.FS.writeFile("/working/" + initialScene, await (await fetch("./examples/scenes/" + initialScene)).text());
+
+// 23 parallel same-origin fetches. If the server is wedged or a response never
+// settles, this is where the page used to freeze silently and forever.
+setStage('downloading the bundled example scenes');
+await withTimeout(downloadExampleScenesFolder(mujoco), 30000, 'Downloading the bundled example scenes');
+
+setStage(`fetching the initial scene (${initialScene})`);
+const initialSceneResponse = await withTimeout(
+  fetch("./examples/scenes/" + initialScene), 15000, `Fetching ${initialScene}`,
+);
+if (!initialSceneResponse.ok) {
+  throw new Error(`Could not fetch examples/scenes/${initialScene}: HTTP ${initialSceneResponse.status}`);
+}
+mujoco.FS.writeFile("/working/" + initialScene, await initialSceneResponse.text());
 
 export class RoboSpaceDemo {
   constructor() {
@@ -29,7 +106,7 @@ export class RoboSpaceDemo {
     this._loadQueue = Promise.resolve();
 
     // Load in the state from XML
-    this.model = new mujoco.Model("/working/" + initialScene);
+    this.model = compileModel(mujoco, "/working/" + initialScene);
     this.state = new mujoco.State(this.model);
     this.simulation = new mujoco.Simulation(this.model, this.state);
 
@@ -98,7 +175,9 @@ export class RoboSpaceDemo {
 
     this.livePlotter = new LivePlotter();
 
-    this.parentBridge = new ParentBridge(this);
+    // versioned() is passed in because ParentBridge lazily imports sceneWriter /
+    // robotPacks for APPLY_SCENE, and a lazy import without the ?v=N serves stale.
+    this.parentBridge = new ParentBridge(this, { versioned });
     window._roboDemo = this;
   }
 
@@ -277,7 +356,7 @@ export class RoboSpaceDemo {
 
   async _populateExamplesWhenReady() {
     try {
-      const { PYTHON_EXAMPLES } = await import('./pythonIntegration.js');
+      const { PYTHON_EXAMPLES } = await import(versioned('./pythonIntegration.js'));
       const host = document.getElementById('ide-examples-list');
       if (!host || !PYTHON_EXAMPLES) return;
       const labels = {
@@ -404,7 +483,7 @@ export class RoboSpaceDemo {
 
   async initializePythonEnvironment() {
     try {
-      const pythonModule = await import('./pythonIntegration.js');
+      const pythonModule = await import(versioned('./pythonIntegration.js'));
       await pythonModule.initializePythonEnvironment(this);
       pythonModule.setupPythonIDE(this);
     } catch (error) {
@@ -413,7 +492,7 @@ export class RoboSpaceDemo {
   }
 
   async updatePythonEnvironment() {
-    const { updatePythonEnvironment } = await import('./pythonIntegration.js');
+    const { updatePythonEnvironment } = await import(versioned('./pythonIntegration.js'));
     await updatePythonEnvironment(this);
   }
 
@@ -424,7 +503,19 @@ export class RoboSpaceDemo {
     const entry = document.createElement('div');
     entry.className = 'error-entry';
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    entry.innerHTML = `<span class="error-time">${time}</span> ${message}`;
+
+    // Build nodes rather than interpolating into innerHTML: `message` now
+    // carries MuJoCo's compiler diagnostic, which quotes names straight out of
+    // the scene XML. An uploaded or generated model containing markup in a
+    // name attribute would otherwise execute here.
+    const stamp = document.createElement('span');
+    stamp.className = 'error-time';
+    stamp.textContent = time;
+    const body = document.createElement('span');
+    body.className = 'error-text';   // white-space: pre-wrap, so multi-line diagnostics keep their shape
+    body.textContent = message;
+    entry.append(stamp, document.createTextNode(' '), body);
+
     errorLog.appendChild(entry);
     errorLog.scrollTop = errorLog.scrollHeight;
 
@@ -609,6 +700,121 @@ export class RoboSpaceDemo {
   }
 }
 
+setStage('constructing the simulator');
 let demo = new RoboSpaceDemo();
 window._roboDemo = demo;  // expose for IDE resize handle
+
+setStage('loading the initial scene');
 await demo.init();
+
+setStage('ready');
+console.log('[robospace] ready');
+
+// Dev/QA entry point:  await robospaceLoadRobot('stretch_3')
+//
+// Fetches a robot from mujoco_menagerie and stands it on a checkered floor. It
+// runs through writeGeneratedScene(), the same path the scene-generation agent
+// uses via ParentBridge → APPLY_SCENE, so checking it by hand exercises the real
+// code — including rendering, which the Node test suites cannot cover.
+window.robospaceListRobots = () => {
+  // Static import would be cleaner, but keeping the manifest out of the initial
+  // module graph avoids paying for it on a page load that never loads a robot.
+  return ['franka_panda', 'stretch_3'];
+};
+
+window.robospaceLoadRobot = async (packId = 'franka_panda') => {
+  const { writeGeneratedScene, defaultRobotScene } = await import(versioned('./utils/sceneWriter.js'));
+  const { ROBOT_MANIFESTS } = await import(versioned('./utils/robotPacks.js'));
+
+  // Own-property lookup, matching ensureRobotPack: a bare index resolves
+  // "__proto__" to a truthy object that slips past this guard and then fails
+  // further in with an unhelpful error.
+  const manifest = Object.prototype.hasOwnProperty.call(ROBOT_MANIFESTS, packId)
+    ? ROBOT_MANIFESTS[packId]
+    : null;
+  if (!manifest) {
+    console.error(`Unknown robot "${packId}". Try one of: ${Object.keys(ROBOT_MANIFESTS).join(', ')}`);
+    return null;
+  }
+  console.log(`Loading ${packId}: ${manifest.files.length} files, ${(manifest.totalBytes / 1048576).toFixed(1)} MB (cached after the first run)`);
+
+  let lastLogged = 0;
+  const started = performance.now();
+  try {
+    const result = await writeGeneratedScene(demo, {
+      sceneName: `${packId}_dev`,
+      robotPack: packId,
+      files: [{ path: 'scene.xml', content: defaultRobotScene(manifest.entry, `${packId} dev scene`) }],
+      onProgress: ({ done, total, bytes, totalBytes }) => {
+        if (bytes - lastLogged < totalBytes / 5 && done !== total) return;
+        lastLogged = bytes;
+        console.log(`  ${done}/${total} files, ${(bytes / 1048576).toFixed(1)}/${(totalBytes / 1048576).toFixed(1)} MB`);
+      },
+    });
+    console.log(`Loaded in ${((performance.now() - started) / 1000).toFixed(1)}s`);
+    for (const p of result.patched) {
+      console.warn(`  patched ${p.path}: ${p.notes.join('; ')}`);
+    }
+    console.log(`  settled ${result.settled.steps} steps (${result.settled.seconds.toFixed(2)}s)${result.settled.atRest ? ' — at rest' : ' — still moving when the budget ran out'}`);
+    console.log('  model:', result.modelStats);
+    console.log('  actuators:', result.modelStats.actuatorNames.join(', '));
+    return result;
+  } catch (err) {
+    console.error(`Failed to load ${packId}:`, err.message);
+    if (err.code === 'MJCF_COMPILE_ERROR' && !err.mujocoDiagnostic) {
+      console.error('  (MuJoCo gave no diagnostic — see compileModel() in mujocoUtils.js for why)');
+    }
+    throw err;
+  }
+};
+
+// Author a whole scene, rather than standing a robot on the default floor:
+//   await robospaceLoadScene('<mujoco>…</mujoco>', 'franka_panda', 'pick')
+//
+// Positional arguments on purpose — Pyodide wraps a Python dict as a PyProxy that
+// this side cannot destructure, the same trap set_control() documents.
+//
+// Same writeGeneratedScene path as robospaceLoadRobot and APPLY_SCENE, so a scene
+// built here behaves exactly like one the agent produces.
+window.robospaceLoadScene = async (xml, robotPack = null, sceneName = 'python_scene') => {
+  if (typeof xml !== 'string' || !xml.trim()) throw new Error('load_scene needs the scene XML as a string.');
+  const pack = robotPack || null;      // Python None arrives as '' or undefined
+  const { writeGeneratedScene } = await import(versioned('./utils/sceneWriter.js'));
+
+  // <include> must be the FIRST element. applyHomePose writes the leading
+  // qpos/ctrl slots, and those only belong to the robot if its bodies were
+  // created first. Get this wrong and the home pose is silently applied to
+  // whatever the scene declared instead — no error, just a robot in a strange
+  // pose and a cube that teleports.
+  if (pack) {
+    const body = xml.replace(/<!--[\s\S]*?-->/g, '');
+    const open = body.indexOf('<mujoco');
+    const after = open < 0 ? '' : body.slice(body.indexOf('>', open) + 1);
+    const first = /<\s*([A-Za-z_][\w.-]*)/.exec(after);
+    if (first && first[1] !== 'include') {
+      console.warn(`[robospace] <include> should be the first element inside <mujoco>, but found <${first[1]}>. `
+        + 'The robot\'s home pose may be applied to the wrong joints.');
+    }
+  }
+
+  let lastLogged = 0;
+  const started = performance.now();
+  try {
+    const result = await writeGeneratedScene(demo, {
+      sceneName,
+      robotPack: pack,
+      files: [{ path: 'scene.xml', content: xml }],
+      onProgress: ({ done, total, bytes, totalBytes }) => {
+        if (bytes - lastLogged < totalBytes / 5 && done !== total) return;
+        lastLogged = bytes;
+        console.log(`  ${done}/${total} files, ${(bytes / 1048576).toFixed(1)}/${(totalBytes / 1048576).toFixed(1)} MB`);
+      },
+    });
+    console.log(`Scene "${sceneName}" loaded in ${((performance.now() - started) / 1000).toFixed(1)}s`);
+    for (const p of result.patched) console.warn(`  patched ${p.path}: ${p.notes.join('; ')}`);
+    return result;
+  } catch (err) {
+    console.error(`Failed to load scene "${sceneName}":`, err.message);
+    throw err;
+  }
+};

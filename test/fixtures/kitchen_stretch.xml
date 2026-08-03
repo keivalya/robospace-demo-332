@@ -1,0 +1,121 @@
+<!--
+  Reference scene: what a good generated result looks like.
+
+  Written to the rules in robospace-nextjs/src/lib/agent/prompt.js, then run through
+  tools/check-scene.mjs until it validated, compiled and settled. Serves as a
+  regression target (npm run test:scene) and as a worked example of the conventions
+  that matter here: include first, no compiler element, no keyframe, one horizontal
+  ground plane, thin boxes for walls, procedural textures only, half-extent sizes,
+  no inertial element, and free objects resting exactly on the surfaces beneath them.
+
+  It also carries the fix for the mistake the first draft made: the island was
+  originally centred at y=0.35 behind the robot, which put it on top of the robot at
+  the origin. MuJoCo compiled that happily and just jammed the two together; the
+  symptom was wheels creeping and the scene never settling. Hence the
+  robot_spawn_blocked check in validate.js.
+
+  Note for editors: XML forbids a double hyphen inside a comment, so command lines
+  with long flags cannot be written here. That mistake is what this very header
+  tripped on first time round, and the validator caught it as an xml_parse error.
+-->
+<mujoco model="kitchen with stretch">
+  <include file="stretch.xml"/>
+
+  <statistic center="0 0.6 0.7" extent="3.5"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="120" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="tilefloor" builtin="checker" mark="edge"
+      rgb1="0.80 0.79 0.75" rgb2="0.68 0.67 0.63" markrgb="0.55 0.55 0.52"
+      width="300" height="300"/>
+    <material name="groundplane" texture="tilefloor" texuniform="true" texrepeat="10 10" reflectance="0.08"/>
+    <material name="wallpaint"   rgba="0.91 0.90 0.86 1"/>
+    <material name="cabinet"     rgba="0.84 0.80 0.72 1"/>
+    <material name="worktop"     rgba="0.26 0.27 0.29 1"/>
+    <material name="steel"       rgba="0.72 0.74 0.76 1"/>
+    <material name="fridgedoor"  rgba="0.86 0.87 0.88 1"/>
+    <material name="mugred"      rgba="0.74 0.27 0.21 1"/>
+    <material name="mugblue"     rgba="0.24 0.40 0.62 1"/>
+    <material name="cereal"      rgba="0.85 0.62 0.20 1"/>
+    <material name="can"         rgba="0.55 0.58 0.60 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0.5 2.7" dir="0 0 -1" directional="true" diffuse="0.7 0.7 0.7"/>
+    <light pos="-1.6 1.4 2.4" dir="0.3 -0.3 -1" diffuse="0.25 0.25 0.25"/>
+
+    <geom name="floor" type="plane" size="0 0 0.05" material="groundplane"/>
+
+    <!-- Room shell: 5.0 m wide, 4.4 m deep, 2.7 m tall. Thin boxes, not planes. -->
+    <geom name="wall_back"  type="box" size="2.50 0.05 1.35" pos="0 2.20 1.35" material="wallpaint"/>
+    <geom name="wall_front" type="box" size="2.50 0.05 1.35" pos="0 -2.20 1.35" material="wallpaint"/>
+    <geom name="wall_left"  type="box" size="0.05 2.20 1.35" pos="-2.50 0 1.35" material="wallpaint"/>
+    <geom name="wall_right" type="box" size="0.05 2.20 1.35" pos="2.50 0 1.35" material="wallpaint"/>
+
+    <!-- Back counter run: carcass 0.88 tall, worktop on top ending at z = 0.92 -->
+    <body name="counter_run" pos="-0.55 1.85 0">
+      <geom name="counter_carcass" type="box" size="1.90 0.30 0.44" pos="0 0 0.44" material="cabinet"/>
+      <geom name="counter_worktop" type="box" size="1.93 0.32 0.02" pos="0 0 0.90" material="worktop"/>
+      <geom name="counter_kick"    type="box" size="1.88 0.26 0.05" pos="0 -0.03 0.05" material="worktop"/>
+    </body>
+
+    <!-- Sink basin, recessed into the worktop as a shallow steel tray -->
+    <body name="sink" pos="-1.30 1.85 0">
+      <geom name="sink_rim"    type="box" size="0.32 0.24 0.02" pos="0 0 0.93" material="steel"/>
+      <geom name="sink_floor"  type="box" size="0.28 0.20 0.01" pos="0 0 0.80" material="steel"/>
+      <geom name="sink_wall_l" type="box" size="0.01 0.20 0.07" pos="-0.28 0 0.86" material="steel"/>
+      <geom name="sink_wall_r" type="box" size="0.01 0.20 0.07" pos="0.28 0 0.86" material="steel"/>
+      <geom name="sink_wall_b" type="box" size="0.28 0.01 0.07" pos="0 0.20 0.86" material="steel"/>
+      <geom name="sink_wall_f" type="box" size="0.28 0.01 0.07" pos="0 -0.20 0.86" material="steel"/>
+    </body>
+
+    <!-- Wall cabinets above the run -->
+    <body name="upper_cabinets" pos="-0.55 2.02 1.75">
+      <geom name="upper_box"   type="box" size="1.90 0.18 0.35" material="cabinet"/>
+      <geom name="upper_shelf" type="box" size="1.88 0.17 0.01" pos="0 0 0" material="worktop"/>
+    </body>
+
+    <!-- Tall fridge unit at the right end of the back wall -->
+    <body name="fridge" pos="1.90 1.90 0">
+      <geom name="fridge_body" type="box" size="0.34 0.32 0.85" pos="0 0 0.85" material="cabinet"/>
+      <geom name="fridge_door" type="box" size="0.35 0.02 0.83" pos="0 -0.33 0.85" material="fridgedoor"/>
+      <geom name="fridge_handle" type="capsule" fromto="0.24 -0.37 0.95 0.24 -0.37 1.45" size="0.015" material="steel"/>
+    </body>
+
+    <!-- Island. Kept back at y=-1.10 so its near face lands at y=-0.70, clear of the
+         0.45 m radius Stretch needs around the origin. -->
+    <body name="island" pos="0 -1.10 0">
+      <geom name="island_carcass" type="box" size="0.80 0.40 0.44" pos="0 0 0.44" material="cabinet"/>
+      <geom name="island_worktop" type="box" size="0.84 0.44 0.02" pos="0 0 0.90" material="worktop"/>
+    </body>
+
+    <!-- Manipulable objects, resting on surfaces within Stretch's reach.
+         Worktop top face is z = 0.92, so an object of half-height h sits at 0.92 + h. -->
+    <body name="mug_1" pos="-0.20 1.72 0.965">
+      <freejoint/>
+      <geom type="cylinder" size="0.040 0.045" material="mugred" density="450"/>
+    </body>
+    <body name="mug_2" pos="0.05 1.78 0.965">
+      <freejoint/>
+      <geom type="cylinder" size="0.040 0.045" material="mugblue" density="450"/>
+    </body>
+    <body name="can_1" pos="0.42 1.70 0.985">
+      <freejoint/>
+      <geom type="cylinder" size="0.033 0.065" material="can" density="700"/>
+    </body>
+    <body name="cereal_box" pos="0.72 1.80 1.020">
+      <freejoint/>
+      <geom type="box" size="0.055 0.030 0.100" material="cereal" density="200"/>
+    </body>
+    <body name="bowl_block" pos="0 -1.05 0.955">
+      <freejoint/>
+      <geom type="box" size="0.055 0.055 0.035" material="mugblue" density="400"/>
+    </body>
+  </worldbody>
+</mujoco>

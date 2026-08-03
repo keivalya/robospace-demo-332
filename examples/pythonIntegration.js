@@ -363,6 +363,73 @@ def get_camera_info(camera_id=0):
         return info.to_py()
     return None
 
+def list_robots():
+    """Names accepted by load_robot()."""
+    return list(window.robospaceListRobots())
+
+async def load_robot(name='franka_panda'):
+    """Download a robot from MuJoCo Menagerie and stand it on a floor.
+
+    Must be awaited:
+
+        await load_robot('stretch_3')
+        print(get_actuator_names())
+        set_control([0.3, 0.3, 0.6, 0.1, 0, 0, 0, 0, 0, 0])   # drive the wheels
+
+    The first call for a robot downloads its meshes (Panda about 33 MB,
+    Stretch 3 about 73 MB) and caches them in the browser, so later calls are
+    instant. The scene is stepped until it comes to rest before rendering, so the
+    robot appears settled rather than dropping into place.
+
+    See list_robots() for the available names.
+    """
+    result = await window.robospaceLoadRobot(name)
+    if result is None:
+        return None
+    stats = result.modelStats
+    print(f"Loaded {name}: nq={stats.nq} nv={stats.nv} nu={stats.nu} nbody={stats.nbody} ngeom={stats.ngeom}")
+    print("Actuators: " + ", ".join(list(stats.actuatorNames)))
+    return result
+
+async def load_scene(xml, robot=None, name='python_scene'):
+    """Compile and load a scene you author yourself. Must be awaited.
+
+        SCENE = '''<mujoco model="pick">
+          <include file="panda.xml"/>
+          <worldbody>
+            <geom name="floor" size="0 0 0.05" type="plane"/>
+            <body name="cube" pos="0.5 0 0.025">
+              <freejoint/>
+              <geom type="box" size="0.025 0.025 0.025" density="300"/>
+            </body>
+          </worldbody>
+        </mujoco>'''
+
+        await load_scene(SCENE, robot='franka_panda', name='pick')
+
+    The 'robot' argument names a registry pack (see list_robots()); its meshes
+    are fetched and written beside your scene, so <include file="..."> resolves.
+    The entry file to include is "panda.xml" for franka_panda and "stretch.xml"
+    for stretch_3.
+
+    Three rules the loader cannot fix for you:
+      * <include> must be the FIRST element inside <mujoco>, or the robot's home
+        pose lands on the wrong joints.
+      * Emit exactly one horizontal ground plane; the renderer draws every plane
+        as a fixed 100x100 mirror and ignores its size and rotation.
+      * Image-file textures do not work in this build. Use builtin="checker",
+        "flat" or "gradient".
+
+    Raises on a compile error, with MuJoCo's diagnostic when it gave one.
+    """
+    result = await window.robospaceLoadScene(xml, robot or '', name)
+    if result is None:
+        return None
+    stats = result.modelStats
+    print(f"Loaded '{name}': nq={stats.nq} nv={stats.nv} nu={stats.nu} nbody={stats.nbody} ngeom={stats.ngeom}")
+    print("Actuators: " + ", ".join(list(stats.actuatorNames)))
+    return result
+
 def print_cameras():
     """Print all camera information"""
     n_cams = get_num_cameras()

@@ -6,14 +6,21 @@
 // and the simulator continues using its existing localStorage-based persistence.
 //
 // Protocol envelope: { source: "robospace", v: 1, type, id, payload }
-//   Parent → child: HELLO, LOAD_PROJECT, NEW_PROJECT, REQUEST_SNAPSHOT, PING
-//   Child  → parent: READY, LOAD_PROJECT_OK, SNAPSHOT, DIRTY, THUMBNAIL, ERROR, PONG
+//   Parent → child: HELLO, LOAD_PROJECT, NEW_PROJECT, REQUEST_SNAPSHOT, PING,
+//                   APPLY_SCENE, READ_SCENE
+//   Child  → parent: READY, LOAD_PROJECT_OK, SNAPSHOT, DIRTY, THUMBNAIL, ERROR, PONG,
+//                    SCENE_OK, SCENE_TEXT, SCENE_PROGRESS
 
 const PROTOCOL_VERSION = 1;
 const HELLO_TIMEOUT_MS = 1500;
 const DIRTY_DEBOUNCE_MS = 750;
 const THUMBNAIL_W = 320;
 const THUMBNAIL_H = 200;
+
+// A cold Stretch 3 fetch fires onProgress ~97 times in a few seconds. Every one
+// is a structured clone across an origin boundary, so coalesce them; the last
+// file always reports regardless, so the bar still finishes at 100%.
+const PROGRESS_THROTTLE_MS = 120;
 
 // Parent origins we trust. The first allowed origin we see in a HELLO becomes
 // the locked-in counterparty for the rest of the session.
@@ -52,7 +59,15 @@ function isTextFile(path) {
 }
 
 export class ParentBridge {
-  constructor(demo) {
+  /**
+   * @param {RoboSpaceDemo} demo
+   * @param {object} [opts]
+   * @param {(specifier: string) => string} [opts.versioned]
+   *   main.js's cache-buster. The agent modules (sceneWriter → robotPacks →
+   *   robotManifests) are imported lazily so a page that never runs the agent
+   *   does not pay for them, and lazy imports need the ?v=N or they serve stale.
+   */
+  constructor(demo, opts = {}) {
     this.demo = demo;
     this.standalone = false;
     this.parentOrigin = null;
@@ -60,6 +75,12 @@ export class ParentBridge {
     this.suppressCameraReset = false;
     this._dirtyTimer = null;
     this._handlers = new Map();
+    this._versioned = opts.versioned || ((s) => s);
+
+    // The robot pack backing the current scene, once one has been written:
+    // { id, commit, sceneDir, paths }. `paths` is what keeps a snapshot small —
+    // see serializeSnapshot.
+    this.robotPack = null;
 
     // Defensive: read projectId from query string so DIRTY events emitted
     // before a LOAD_PROJECT can still be tagged correctly.
@@ -160,6 +181,30 @@ export class ParentBridge {
         }
         break;
       }
+      case 'APPLY_SCENE':
+        // The agent's main tool. Every failure here is reported rather than
+        // thrown, because a compile error is the *expected* case in a repair
+        // loop: the diagnostic is what the model uses to fix its own MJCF.
+        this._handleApplyScene(data.payload || {}, data.id)
+          .then((result) => this._send('SCENE_OK', result, data.id))
+          .catch((err) => this._send('ERROR', {
+            code: err?.code || 'APPLY_SCENE_FAILED',
+            message: String(err?.message || err),
+            // '' when MuJoCo compiled-and-failed silently, which is common in
+            // this build — see compileModel() in mujocoUtils.js.
+            mujocoDiagnostic: err?.mujocoDiagnostic ?? null,
+            recoverable: true,
+          }, data.id));
+        break;
+      case 'READ_SCENE':
+        this._handleReadScene(data.payload || {})
+          .then((result) => this._send('SCENE_TEXT', result, data.id))
+          .catch((err) => this._send('ERROR', {
+            code: 'READ_SCENE_FAILED',
+            message: String(err?.message || err),
+            recoverable: true,
+          }, data.id));
+        break;
       default:
         // Unknown but well-formed message — ignore.
         break;
@@ -204,13 +249,27 @@ export class ParentBridge {
     const demo = this.demo;
     const entryXmlPath = demo.params.scene;
     const files = [];
+    let robotPack = null;
 
     // Only walk custom_scenes/* — built-in scenes are re-downloaded on each
     // boot, so we don't need to ship them in every snapshot.
     if (entryXmlPath && entryXmlPath.startsWith('custom_scenes/')) {
-      const sceneRoot = `/working/${entryXmlPath.split('/').slice(0, 2).join('/')}`; // /working/custom_scenes/<name>
+      const sceneDir = entryXmlPath.split('/').slice(0, 2).join('/');   // custom_scenes/<name>
+      const sceneRoot = `/working/${sceneDir}`;
+
+      // Schema v2: a robot is stored as a reference and re-fetched from the
+      // pinned commit on load, never inlined. Base64ing Stretch 3 into every
+      // autosave is 73 MB through postMessage and into Firebase Storage — the
+      // whole reason the registry is CDN-backed.
+      //
+      // Scoped to the *current* scene dir: if the user has since switched to a
+      // built-in scene, _packPathsFor returns empty and no reference is written.
+      const packPaths = this._packPathsFor(sceneDir);
+      if (packPaths.size) robotPack = this._packReference();
+
       this._walkFS(sceneRoot, (full) => {
         const rel = full.replace(/^\/working\//, '');
+        if (packPaths.has(rel.slice(sceneDir.length + 1))) return;
         const isText = isTextFile(full);
         const content = isText
           ? demo.mujoco.FS.readFile(full, { encoding: 'utf8' })
@@ -226,9 +285,13 @@ export class ParentBridge {
     const sceneName = entryXmlPath ? entryXmlPath.split('/').slice(-2, -1)[0] || entryXmlPath.split('/')[0] : 'scene';
 
     return {
-      schemaVersion: 1,
+      // v2 adds `robotPack`. The version is informational — what actually
+      // changes behaviour on load is whether `robotPack` is present, so a v2
+      // snapshot without one loads down exactly the v1 path.
+      schemaVersion: 2,
       sceneName,
       entryXmlPath,
+      robotPack,
       files,
       script,
       camera: {
@@ -258,10 +321,50 @@ export class ParentBridge {
     const demo = this.demo;
     if (!snap || !snap.entryXmlPath) throw new Error('snapshot missing entryXmlPath');
 
-    if (snap.entryXmlPath.startsWith('custom_scenes/')) {
-      const sceneRoot = `/working/${snap.entryXmlPath.split('/').slice(0, 2).join('/')}`;
-      this._rmrf(sceneRoot);
-      this._ensureDir(sceneRoot);
+    const sceneDir = snap.entryXmlPath.startsWith('custom_scenes/')
+      ? snap.entryXmlPath.split('/').slice(0, 2).join('/')
+      : null;
+
+    if (sceneDir) {
+      this._rmrf(`/working/${sceneDir}`);
+      this._ensureDir(`/working/${sceneDir}`);
+    }
+
+    // Schema v2: the robot is a reference, so re-materialise it from the pinned
+    // commit before overlaying files[] — pack first, so a generated file wins any
+    // name collision. IndexedDB makes this local after the first fetch.
+    //
+    // A v1 snapshot has no robotPack and skips all of this, which is what keeps
+    // projects saved before the agent existed loading unchanged.
+    let homePose = null;
+    if (snap.robotPack?.id && sceneDir) {
+      const { robotPacks } = await this._agentModules();
+      if (snap.robotPack.commit && snap.robotPack.commit !== robotPacks.MENAGERIE_COMMIT) {
+        // Not fatal, but worth saying out loud: the registry is pinned in code,
+        // and there are no manifests for historical commits to fetch instead.
+        console.warn(
+          `[ParentBridge] snapshot pins ${snap.robotPack.id} at menagerie `
+          + `${snap.robotPack.commit.slice(0, 8)}, loading ${robotPacks.MENAGERIE_COMMIT.slice(0, 8)}`,
+        );
+      }
+      let lastProgressAt = 0;
+      const pack = await robotPacks.ensureRobotPack(demo.mujoco, snap.robotPack.id, sceneDir, {
+        onProgress: (p) => {
+          const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          if (p.done !== p.total && now - lastProgressAt < PROGRESS_THROTTLE_MS) return;
+          lastProgressAt = now;
+          this._send('SCENE_PROGRESS', { projectId: this.projectId, phase: 'assets', ...p });
+        },
+      });
+      homePose = pack.homePose;
+      this.robotPack = {
+        id: snap.robotPack.id,
+        commit: robotPacks.MENAGERIE_COMMIT,
+        sceneDir,
+        paths: pack.paths,
+      };
+    } else {
+      this.robotPack = null;
     }
 
     if (Array.isArray(snap.files)) {
@@ -287,15 +390,27 @@ export class ParentBridge {
       this.suppressCameraReset = false;
     }
 
+    let restoredSim = false;
     if (snap.sim && demo.simulation) {
       try {
         if (snap.sim.qpos) demo.simulation.qpos.set(snap.sim.qpos);
         if (snap.sim.qvel) demo.simulation.qvel.set(snap.sim.qvel);
         if (snap.sim.ctrl) demo.simulation.ctrl.set(snap.sim.ctrl);
         demo.simulation.forward();
+        restoredSim = true;
       } catch (e) {
         console.warn('[ParentBridge] failed to restore sim state (size mismatch?):', e);
       }
+    }
+
+    // The saved state is the better pose when we have it — it is where the user
+    // actually left the scene. The home pose is the fallback, and it matters:
+    // robotPacks strips the <keyframe> that used to carry it (it aborts
+    // mj_makeData once a scene adds any joint), so without one of the two the
+    // robot spawns at qpos0 with its arm out and visibly sags.
+    if (!restoredSim && homePose) {
+      const { sceneWriter } = await this._agentModules();
+      sceneWriter.applyHomePose(demo, homePose);
     }
 
     if (snap.camera && demo.camera && demo.controls) {
@@ -353,6 +468,179 @@ export class ParentBridge {
 
     if (typeof window.resetPythonScript === 'function') {
       window.resetPythonScript();
+    }
+
+    // A fresh project is not backed by a robot pack until one is applied.
+    this.robotPack = null;
+  }
+
+  // ─── agent scene authoring ────────────────────────────────────────────
+
+  /** Lazily pulls in sceneWriter → robotPacks → robotManifests, which are ~30 KB
+   *  of manifest that a page never running the agent should not download. Cached
+   *  so a repair loop's later iterations do not re-resolve the graph. */
+  _agentModules() {
+    return (this._agentModulesPromise ||= (async () => ({
+      sceneWriter: await import(this._versioned('./sceneWriter.js')),
+      robotPacks: await import(this._versioned('./robotPacks.js')),
+    }))());
+  }
+
+  /**
+   * APPLY_SCENE — write a generated scene into MEMFS, compile it, settle it.
+   *
+   * Two shapes, because two agent tools land here:
+   *   { sceneName, robotPack?, files, entryXmlPath?, script? } → full scene write
+   *   { script }                                               → controller only
+   *
+   * The script-only form deliberately does not recompile. write_script runs after
+   * a successful apply_scene, and reloading the scene would throw away the settled
+   * state the user is already looking at — and pay for settling a second time.
+   *
+   * Everything is delegated to sceneWriter.writeGeneratedScene, which is also what
+   * window.robospaceLoadRobot() calls. That shared path is deliberate: it is the
+   * only way a by-hand browser check exercises the same code as the agent,
+   * including rendering, which no Node test covers.
+   */
+  async _handleApplyScene(payload, requestId) {
+    const { sceneName, robotPack = null, files, script, entryXmlPath, settle } = payload;
+    const hasFiles = Array.isArray(files) && files.length > 0;
+
+    if (!hasFiles) {
+      if (typeof script !== 'string') {
+        throw new Error('APPLY_SCENE needs files[] to build a scene, or script to set the controller.');
+      }
+      if (!this._setScript(script)) {
+        throw new Error('The Python editor is not ready yet, so the script was not saved.');
+      }
+      this.emitDirty('agent-script');
+      return {
+        projectId: this.projectId,
+        scriptOnly: true,
+        entryXmlPath: this.demo.params.scene,
+        modelStats: await this._currentModelStats(),
+      };
+    }
+
+    const { sceneWriter, robotPacks } = await this._agentModules();
+
+    let lastProgressAt = 0;
+    const onProgress = (p) => {
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      if (p.done !== p.total && now - lastProgressAt < PROGRESS_THROTTLE_MS) return;
+      lastProgressAt = now;
+      // Sent WITHOUT replyToId on purpose. simBridge resolves any inbound message
+      // whose id matches a pending request, so echoing requestId here would settle
+      // the APPLY_SCENE promise early with a progress payload and the real result
+      // would arrive with nowhere to go. Correlate in the body instead.
+      this._send('SCENE_PROGRESS', { projectId: this.projectId, requestId, phase: 'assets', ...p });
+    };
+
+    const result = await sceneWriter.writeGeneratedScene(this.demo, {
+      sceneName, robotPack, files, entryXmlPath, settle, onProgress,
+    });
+
+    // Remember the pack so snapshots can reference it instead of inlining it.
+    this.robotPack = robotPack
+      ? {
+        id: robotPack,
+        commit: robotPacks.MENAGERIE_COMMIT,
+        sceneDir: result.sceneDir,
+        paths: result.packPaths,
+      }
+      : null;
+
+    this._ensureSceneOption(sceneName, result.entryXmlPath);
+    const sceneSelector = document.getElementById('scene-selector');
+    if (sceneSelector) sceneSelector.value = result.entryXmlPath;
+
+    if (typeof script === 'string' && !this._setScript(script)) {
+      console.warn('[ParentBridge] scene applied but the Python editor was not ready for the script');
+    }
+
+    // Hands the result to the parent's existing DIRTY → autosave chain; the agent
+    // needs no save path of its own.
+    this.emitDirty('agent');
+
+    return {
+      projectId: this.projectId,
+      entryXmlPath: result.entryXmlPath,
+      modelStats: result.modelStats,
+      patched: result.patched,
+      settled: result.settled,
+      robotPack: this._packReference(),
+    };
+  }
+
+  /**
+   * READ_SCENE — the current scene's XML, for refinement turns.
+   *
+   * Reads demo.params.scene rather than a caller-supplied path. The agent has no
+   * legitimate reason to name a different file (it just applied this one), and
+   * accepting a path here would add a second model-controlled MEMFS path to
+   * validate for no gain — see the entryXmlPath notes in sceneWriter.
+   *
+   * `files` lists only what the agent authored. The pack's ~97 meshes are excluded:
+   * they are not the agent's to rewrite, and listing them buries the scene.
+   */
+  async _handleReadScene(_payload) {
+    const demo = this.demo;
+    const entryXmlPath = demo.params.scene;
+    if (!entryXmlPath) throw new Error('No scene is currently loaded.');
+
+    const FS = demo.mujoco.FS;
+    const full = `/working/${entryXmlPath}`;
+    if (!FS.analyzePath(full).exists) {
+      throw new Error(`Scene file ${entryXmlPath} is not present in the simulator filesystem.`);
+    }
+    const content = FS.readFile(full, { encoding: 'utf8' });
+
+    const files = [];
+    if (entryXmlPath.startsWith('custom_scenes/')) {
+      const sceneDir = entryXmlPath.split('/').slice(0, 2).join('/');
+      const packPaths = this._packPathsFor(sceneDir);
+      this._walkFS(`/working/${sceneDir}`, (path) => {
+        const rel = path.slice(`/working/${sceneDir}/`.length);
+        if (!packPaths.has(rel)) files.push(rel);
+      });
+    }
+
+    return {
+      projectId: this.projectId,
+      entryXmlPath,
+      content,
+      files,
+      robotPack: this._packReference(),
+    };
+  }
+
+  /** The snapshot-sized view of the active pack: an id and a commit, never bytes. */
+  _packReference() {
+    return this.robotPack ? { id: this.robotPack.id, commit: this.robotPack.commit } : null;
+  }
+
+  /** Pack-owned paths (relative to sceneDir) for the scene dir being asked about,
+   *  or an empty set if the active pack belongs to some other scene. */
+  _packPathsFor(sceneDir) {
+    const pack = this.robotPack;
+    if (!pack || pack.sceneDir !== sceneDir) return new Set();
+    return new Set(pack.paths);
+  }
+
+  _setScript(script) {
+    if (typeof window.setPythonScript !== 'function') return false;
+    window.setPythonScript(script);
+    return true;
+  }
+
+  async _currentModelStats() {
+    if (!this.demo.model) return null;
+    try {
+      const { sceneWriter } = await this._agentModules();
+      return sceneWriter.readModelStats(this.demo.model);
+    } catch (e) {
+      console.warn('[ParentBridge] could not read model stats:', e);
+      return null;
     }
   }
 

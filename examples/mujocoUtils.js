@@ -1,6 +1,7 @@
 // mujocoUtils.js
 import * as THREE from 'three';
 import { Reflector  } from './utils/Reflector.js';
+import { clearMjLog, drainMjLog } from './utils/mujocoLog.js';
 // NOTE: do NOT `import { RoboSpaceDemo } from './main.js'`.
 // It was used only for JSDoc @param types, but importing main.js without the
 // cache-bust query string causes the browser to load it as a *separate* module
@@ -269,6 +270,108 @@ export function setupGUI(parentContext) {
 }
 
 
+/** Compiles an MJCF file into a Model, throwing on any compile failure.
+ *
+ * Detecting failure here is awkward, because none of the obvious signals work:
+ *
+ *   - load_from_xml does NOT reliably throw. For most *semantic* errors
+ *     (wrong size arity, duplicate names, unresolved actuator target) it
+ *     returns a Model wrapping a NULL mjModel*.
+ *   - model.ptr() is not callable at all — embind never registered mjModel*,
+ *     so it raises "Cannot call Model.ptr due to unbound types: P8mjModel_".
+ *   - Reading fields off the null model does not trap, it returns garbage
+ *     from low memory (nq came back as 1668509029 in testing). So a field
+ *     sanity-check would silently accept a broken model.
+ *
+ * What is reliable is stdout: finish() printf's the error buffer, and it is
+ * only called on failure (src/main.template.cc:17-35). Measured over 16 broken
+ * models plus the primitives scene and the full ur5e scene (30 geoms, 20
+ * meshes, a texture): zero false negatives, zero false positives.
+ *
+ * Caveat on message *quality*, which is a limitation of the shipped binary:
+ * src/CMakeLists.txt links with EXCEPTION_CATCHING_ALLOWED=['load_from_xml'],
+ * which strips the catch handler inside mj_loadXML that would normally turn an
+ * internal mjXError into readable text. So tinyxml2 parse errors arrive with
+ * full detail, while MJCF semantic errors arrive as an empty string or a bare
+ * "mjXError". Rebuilding to fix that is blocked: main.genned.cc is generated
+ * against an older MuJoCo than include/ (references tex_rgb, nmeshtexvert,
+ * nstack, mjtCollision, ...), so the bindings need porting to 3.3.2 first.
+ * Until then, callers should pre-validate semantics in JS — see the scene
+ * validator on the agent side, which owns the checks MuJoCo cannot explain.
+ *
+ * If a *valid* model is ever rejected here, the cause is MuJoCo printing a
+ * non-fatal warning during compile; the warning text will be in err.message.
+ *
+ * @param {mujoco} mujoco The mujoco namespace object
+ * @param {string} path Absolute path inside the Emscripten FS, e.g. /working/foo/scene.xml
+ * @returns {Model}
+ */
+export function compileModel(mujoco, path) {
+  clearMjLog();
+
+  let model = null;
+  let thrown = null;
+  try {
+    model = mujoco.Model.load_from_xml(path);
+  } catch (e) {
+    thrown = e;
+  }
+  // Count lines, don't test the text: a failed compile often prints a single
+  // EMPTY line (MuJoCo left the error buffer blank — see the caveat above), and
+  // that empty line is still the signal. Testing truthiness of the joined text
+  // silently accepts every one of those models.
+  const lines = drainMjLog();
+  const printed = lines.join('\n').trim();
+
+  if (thrown !== null || lines.length > 0) {
+    const err = new Error(formatCompileFailure(printed, thrown));
+    err.code = 'MJCF_COMPILE_ERROR';
+    err.mujocoDiagnostic = printed;          // '' when MuJoCo gave us nothing
+    throw err;
+  }
+
+  return model;
+}
+
+function formatCompileFailure(printed, thrown) {
+  if (printed) return printed;
+
+  // Thrown-but-silent: the embind wrapper stringifies mjXError to just its type
+  // name, and getExceptionMessage() raises on it, so there is no text to
+  // recover. Say so plainly rather than surfacing "mjXError" as if it were a
+  // diagnostic — a caller (or a model) trying to act on it needs to know the
+  // reason is genuinely unavailable, not just terse.
+  const raw = thrown && thrown.message ? thrown.message : String(thrown ?? '');
+  const detail = raw && raw !== 'mjXError' ? ` (${raw})` : '';
+  return 'MuJoCo rejected this model but did not report a reason' + detail +
+    '. This is usually a structural problem: a geom size with the wrong number ' +
+    'of values for its type, a duplicate name, a reference to an asset or joint ' +
+    'that does not exist, or an element in the wrong place.';
+}
+
+/** Reads the names of a model's actuators and joints out of model.names.
+ *
+ * Same decoding approach as pythonIntegration.js:59-71 — names is one packed
+ * buffer of NUL-terminated strings, indexed by the name_*adr tables.
+ *
+ * @param {Model} model
+ * @returns {{ actuatorNames: string[], jointNames: string[] }}
+ */
+export function readModelNames(model) {
+  const decoder = new TextDecoder('utf-8');
+  const readAt = (addr) => decoder.decode(model.names.subarray(addr)).split('\0')[0] || '';
+
+  const actuatorNames = [];
+  for (let i = 0; i < model.nu; i++) {
+    actuatorNames.push(readAt(model.name_actuatoradr[i]) || `actuator_${i}`);
+  }
+  const jointNames = [];
+  for (let i = 0; i < model.njnt; i++) {
+    jointNames.push(readAt(model.name_jntadr[i]) || `joint_${i}`);
+  }
+  return { actuatorNames, jointNames };
+}
+
 /** Loads a scene for MuJoCo
  * @param {mujoco} mujoco This is a reference to the mujoco namespace object
  * @param {string} filename This is the name of the .xml file in the /working/ directory of the MuJoCo/Emscripten Virtual File System
@@ -315,7 +418,7 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
     parent.mujocoRoot = null;
 
     // Load in the state from XML.
-    parent.model       = mujoco.Model.load_from_xml("/working/"+filename);
+    parent.model       = compileModel(mujoco, "/working/"+filename);
     parent.state       = new mujoco.State(parent.model);
     parent.simulation  = new mujoco.Simulation(parent.model, parent.state);
 

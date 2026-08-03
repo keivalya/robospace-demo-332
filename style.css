@@ -574,6 +574,12 @@ body {
     margin-right: 6px;
 }
 
+/* MuJoCo compiler diagnostics are multi-line; keep their formatting. */
+.error-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* ── Live plot panel (floats over viewport) ──────────────── */
 #live-plot-panel {
     position: absolute;

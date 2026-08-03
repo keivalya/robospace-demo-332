@@ -7,7 +7,11 @@
     "lib": "lib"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --import ./test/register.mjs test/compile-diagnostics.test.mjs",
+    "test:inputs": "node --import ./test/register.mjs test/scene-writer-inputs.test.mjs",
+    "test:bridge": "node --import ./test/register.mjs test/parent-bridge.test.mjs",
+    "test:packs": "node --import ./test/register.mjs test/robot-packs.test.mjs",
+    "test:scene": "node --import ./test/register.mjs tools/check-scene.mjs test/fixtures/kitchen_stretch.xml"
   },
   "repository": {
     "type": "git",
