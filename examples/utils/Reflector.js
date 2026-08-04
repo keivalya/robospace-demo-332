@@ -56,7 +56,9 @@ class Reflector extends Mesh {
 
 		const renderTarget = new WebGLRenderTarget( textureWidth, textureHeight, { samples: multisample, type: HalfFloatType } );
 
-		this.material = new MeshPhysicalMaterial( { map: blendTexture });
+		// Only pass `map` when there is one; three.js warns on an explicitly-undefined
+		// parameter, and the ground plane is usually untextured.
+		this.material = new MeshPhysicalMaterial( blendTexture ? { map: blendTexture } : {} );
 		this.material.uniforms = { tDiffuse     : { value: renderTarget.texture },
 								   textureMatrix: { value: textureMatrix        }};
         this.material.onBeforeCompile = ( shader ) => {

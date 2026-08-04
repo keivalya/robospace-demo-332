@@ -169,6 +169,10 @@ export function settle(demo, opts = {}) {
     while (steps < budget) {
       const n = Math.min(chunk, budget - steps);
       for (let i = 0; i < n; i++) demo.simulation.step();
+      // Every stepping site feeds the clock, without exception — that invariant is
+      // what test/sim-clock.test.mjs enforces. Optional chaining because
+      // tools/check-scene.mjs builds a bare demo with no clock.
+      demo.simClock?.advance(n, timestep);
       steps += n;
       let peak = 0;
       const qvel = demo.simulation.qvel;
@@ -183,10 +187,13 @@ export function settle(demo, opts = {}) {
     console.warn('[sceneWriter] settling failed:', e);
     return { steps: 0, seconds: 0, atRest: false };
   }
-  // Keep the demo's own clock in step with the simulation it is about to render,
-  // otherwise render() sees a large gap and its catch-up loop resyncs instead of
-  // stepping (examples/main.js render()).
+  // Reset the render loop's wall-clock accumulator. Either value costs one resynced
+  // frame — the loop resyncs whenever the gap exceeds 35 ms, and after settling it
+  // always does — so this is housekeeping, not correctness.
   if (typeof demo.mujoco_time === 'number') demo.mujoco_time = 0.0;
+  // Simulation time is deliberately NOT reset here: settling genuinely advanced the
+  // physics, and a script reading get_time() should see that rather than a pretend
+  // zero. It was accumulated per chunk above.
   return { steps, seconds: steps * timestep, atRest };
 }
 
