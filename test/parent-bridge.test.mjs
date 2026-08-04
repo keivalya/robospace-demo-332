@@ -135,11 +135,15 @@ function createFakeDemo() {
     compileError: null,
     reloadCount: 0,
   };
-  demo.reloadScene = async () => {
+  // Mirrors main.js's reloadScene: the scene is captured from the argument when given
+  // (callers used to pre-set params.scene and let the queued job read it later, which
+  // meant an overlapping reload could load someone else's scene), and params.scene is
+  // updated only once the load has actually succeeded.
+  demo.reloadScene = async (sceneOverride) => {
+    const scene = sceneOverride ?? demo.params.scene;
     demo.reloadCount += 1;
     if (demo.compileError) {
-      // Mirrors loadSceneFromURL, which frees the old simulation *before* it
-      // compiles: after a failure the demo really is left without a model.
+      // Mirrors loadSceneFromURL on failure: the model is left null.
       demo.model = null;
       demo.simulation = null;
       const err = new Error(demo.compileError.message);
@@ -149,6 +153,7 @@ function createFakeDemo() {
     }
     demo.model = fakeModel();
     demo.simulation = fakeSimulation(demo.model);
+    demo.params.scene = scene;
   };
   return demo;
 }
@@ -529,6 +534,135 @@ console.log('\nsnapshot v2 — serialize');
   eq(other.robotPack, null, 'a pack from a different scene dir is not referenced');
   eq(other.files.length, 1, 'and its files are not excluded from the new scene');
   bridge.robotPack = null;
+}
+
+console.log('\nsingle-flight');
+{
+  // writeGeneratedScene starts with rmrf of the scene dir, so a second concurrent
+  // apply deletes the first's files. Reject rather than queue.
+  const { bridge } = newBridge();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  bridge._agentModulesPromise = Promise.resolve({
+    robotPacks: { MENAGERIE_COMMIT: 'c0ffee', ensureRobotPack: async () => ({}) },
+    sceneWriter: {
+      ...realSceneWriter,
+      writeGeneratedScene: async (d) => {
+        await gate;
+        return {
+          entryXmlPath: 'custom_scenes/kitchen/scene.xml', sceneDir: 'custom_scenes/kitchen',
+          modelStats: realSceneWriter.readModelStats(d.model),
+          patched: [], homePose: null, settled: { steps: 0, seconds: 0, atRest: true },
+          robotPack: null, packPaths: [],
+        };
+      },
+    },
+  });
+
+  const firstId = deliver('APPLY_SCENE', { sceneName: 'kitchen', files: [{ path: 'scene.xml', content: SCENE_XML }] });
+  await new Promise((r) => setTimeout(r, 20));
+  const secondId = deliver('APPLY_SCENE', { sceneName: 'kitchen', files: [{ path: 'scene.xml', content: SCENE_XML }] });
+  const rejected = await waitForReply(secondId);
+  check(rejected?.type === 'ERROR', 'a concurrent APPLY_SCENE is refused');
+  eq(rejected?.payload?.code, 'SCENE_BUSY', 'refusal is tagged SCENE_BUSY, not a compile error');
+  eq(rejected?.payload?.recoverable, true, 'and marked recoverable so the caller retries');
+
+  release();
+  const first = await waitForReply(firstId);
+  check(first?.type === 'SCENE_OK', 'the first apply still completes');
+
+  // The lock must clear, or one busy apply wedges the bridge forever.
+  const thirdId = deliver('APPLY_SCENE', { sceneName: 'kitchen', files: [{ path: 'scene.xml', content: SCENE_XML }] });
+  const third = await waitForReply(thirdId);
+  check(third?.type === 'SCENE_OK', 'a later apply succeeds once the lock clears');
+  bridge.robotPack = null;
+}
+
+{
+  // A script-only apply touches no files, so it must not be blocked by the lock.
+  const { bridge } = newBridge();
+  window.setPythonScript = () => {};
+  bridge._applyInFlight = true;
+  const id = deliver('APPLY_SCENE', { script: 'x = 1' });
+  const reply = await waitForReply(id);
+  check(reply?.type === 'SCENE_OK', 'a script-only apply is not gated by the scene lock');
+  delete window.setPythonScript;
+  bridge._applyInFlight = false;
+  bridge.robotPack = null;
+}
+
+console.log('\nsnapshot path confinement');
+{
+  // applySnapshot was the one MEMFS write path that bypassed sceneWriter's guards.
+  const { bridge, demo } = newBridge();
+  bridge._agentModulesPromise = Promise.resolve({
+    sceneWriter: realSceneWriter,
+    robotPacks: { MENAGERIE_COMMIT: 'abc123', ensureRobotPack: async () => ({}) },
+  });
+
+  const rejects = async (snap, label) => {
+    let threw = false;
+    try { await bridge.applySnapshot(snap); } catch (_) { threw = true; }
+    check(threw, label);
+  };
+
+  // `custom_scenes/..` used to become the rmrf target — i.e. all of /working.
+  await rejects({
+    schemaVersion: 2, sceneName: 'x', entryXmlPath: 'custom_scenes/../evil.xml', files: [],
+  }, 'entryXmlPath escaping via ".." is refused before anything is deleted');
+  await rejects({
+    schemaVersion: 2, sceneName: 'x', entryXmlPath: 'custom_scenes/./scene.xml', files: [],
+  }, 'entryXmlPath with a "." segment is refused');
+  await rejects({
+    schemaVersion: 2, sceneName: 'x', entryXmlPath: 'custom_scenes/kitchen', files: [],
+  }, 'entryXmlPath with no filename is refused');
+  // files[].path stripped only leading slashes, so ".." passed straight through.
+  await rejects({
+    schemaVersion: 2, sceneName: 'kitchen', entryXmlPath: 'custom_scenes/kitchen/scene.xml',
+    files: [{ path: 'custom_scenes/kitchen/../../evil.xml', encoding: 'utf8', content: 'x' }],
+  }, 'a file path escaping the scene dir is refused');
+  await rejects({
+    schemaVersion: 2, sceneName: 'kitchen', entryXmlPath: 'custom_scenes/kitchen/scene.xml',
+    files: [{ path: '/etc/passwd', encoding: 'utf8', content: 'x' }],
+  }, 'an absolute file path is refused');
+
+  check(!demo.mujoco.FS.files.has('/working/evil.xml'), 'nothing was written outside the scene dir');
+
+  // And the ordinary shape still loads.
+  await bridge.applySnapshot({
+    schemaVersion: 2, sceneName: 'kitchen', entryXmlPath: 'custom_scenes/kitchen/scene.xml',
+    files: [{ path: 'custom_scenes/kitchen/scene.xml', encoding: 'utf8', content: SCENE_XML }],
+    sim: null,
+  });
+  check(demo.mujoco.FS.files.has('/working/custom_scenes/kitchen/scene.xml'),
+    'a well-formed snapshot still applies');
+  eq(demo.params.scene, 'custom_scenes/kitchen/scene.xml', 'and selects its scene');
+}
+
+{
+  // LOAD_PROJECT coalesces instead of rejecting: StrictMode legitimately doubles it.
+  const { bridge } = newBridge();
+  let calls = 0;
+  bridge._agentModulesPromise = Promise.resolve({
+    sceneWriter: realSceneWriter,
+    robotPacks: { MENAGERIE_COMMIT: 'abc123', ensureRobotPack: async () => ({}) },
+  });
+  const snap = {
+    schemaVersion: 2, sceneName: 'kitchen', entryXmlPath: 'custom_scenes/kitchen/scene.xml',
+    files: [{ path: 'custom_scenes/kitchen/scene.xml', encoding: 'utf8', content: SCENE_XML }],
+    sim: null,
+  };
+  const realApply = bridge.applySnapshot.bind(bridge);
+  bridge.applySnapshot = async (s) => { calls++; return realApply(s); };
+
+  const a = deliver('LOAD_PROJECT', { projectId: 'p', snapshot: snap });
+  const b = deliver('LOAD_PROJECT', { projectId: 'p', snapshot: snap });
+  const [ra, rb] = [await waitForReply(a), await waitForReply(b)];
+  eq(ra?.type, 'LOAD_PROJECT_OK', 'the first LOAD_PROJECT succeeds');
+  eq(rb?.type, 'LOAD_PROJECT_OK', 'the concurrent duplicate also succeeds');
+  eq(calls, 1, 'but the snapshot was applied only once');
+  check(typed('SCENE_PROGRESS').length > 0,
+    'a progress beat is emitted even on a cache hit, so the idle timeout re-arms');
 }
 
 console.log('\nsnapshot v2 — apply');

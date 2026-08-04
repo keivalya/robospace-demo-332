@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { Reflector  } from './utils/Reflector.js';
 import { clearMjLog, drainMjLog } from './utils/mujocoLog.js';
+import { disposeSceneGraph } from './utils/disposeThree.js';
+import { recordHeap } from './utils/wasmHeap.js';
 // NOTE: do NOT `import { RoboSpaceDemo } from './main.js'`.
 // It was used only for JSDoc @param types, but importing main.js without the
 // cache-bust query string causes the browser to load it as a *separate* module
@@ -407,26 +409,10 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
       parent.dragStateManager.reset();
     }
 
-    const cleanUpRoot = (rootObj) => {
-      if (!rootObj) return;
-      rootObj.traverse((node) => {
-        if (node.isMesh || node.isLine || node.isPoints) {
-          if (node.geometry) node.geometry.dispose();
-          if (node.material) {
-            if (Array.isArray(node.material)) {
-              node.material.forEach((m) => m.dispose());
-            } else {
-              node.material.dispose();
-            }
-          }
-        }
-      });
-      if (rootObj.parent) {
-        rootObj.parent.remove(rootObj);
-      }
-    };
-
     // Clean up any existing MuJoCo Root group in the three.js scene.
+    //
+    // Must happen BEFORE the geometry-building loop below, so a texture the next
+    // scene is about to use is never disposed out from under it.
     const toRemove = [];
     parent.scene.traverse((node) => {
       if (node.name === "MuJoCo Root") {
@@ -434,7 +420,8 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
       }
     });
     for (const rootObj of toRemove) {
-      cleanUpRoot(rootObj);
+      const freed = disposeSceneGraph(rootObj);
+      parent._lastDisposeCounts = freed;   // read by the reload-lifecycle test
     }
     parent.mujocoRoot = null;
 
@@ -442,6 +429,10 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
     parent.model       = newModel;
     parent.state       = new mujoco.State(parent.model);
     parent.simulation  = new mujoco.Simulation(parent.model, parent.state);
+
+    // mj_makeData's arena is what actually grows the heap, so sample after State
+    // exists rather than after the compile.
+    recordHeap(parent, parent.model);
 
     let model = parent.model;
     let state = parent.state;

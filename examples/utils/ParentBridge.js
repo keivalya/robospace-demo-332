@@ -11,6 +11,8 @@
 //   Child  → parent: READY, LOAD_PROJECT_OK, SNAPSHOT, DIRTY, THUMBNAIL, ERROR, PONG,
 //                    SCENE_OK, SCENE_TEXT, SCENE_PROGRESS
 
+import { resolveEntryXmlPath, snapshotSceneDir } from './safePath.js';
+
 const PROTOCOL_VERSION = 1;
 const HELLO_TIMEOUT_MS = 1500;
 const DIRTY_DEBOUNCE_MS = 750;
@@ -127,6 +129,11 @@ export class ParentBridge {
     // see serializeSnapshot.
     this.robotPack = null;
 
+    // In-flight scene work. Both kinds must be single-flight, but they want opposite
+    // treatment on collision — see _handleApplyScene and the LOAD_PROJECT case.
+    this._applyInFlight = false;
+    this._loadInFlight = null;
+
     // Defensive: read projectId from query string so DIRTY events emitted
     // before a LOAD_PROJECT can still be tagged correctly.
     try {
@@ -227,7 +234,15 @@ export class ParentBridge {
         try {
           const snapshot = this.serializeSnapshot();
           const thumbnailDataUrl = includeThumb ? this._captureThumbnail() : undefined;
-          this._send('SNAPSHOT', { projectId: this.projectId, snapshot, thumbnailDataUrl }, data.id);
+          // heapBytes rides on the message envelope, deliberately NOT inside
+          // `snapshot` — that object is persisted to Storage and its shape is a
+          // schema, so a diagnostic has no business in it.
+          this._send('SNAPSHOT', {
+            projectId: this.projectId,
+            snapshot,
+            thumbnailDataUrl,
+            heapBytes: this.demo.heapBytes ?? null,
+          }, data.id);
         } catch (err) {
           this._send(
             'ERROR',
@@ -377,9 +392,13 @@ export class ParentBridge {
     const demo = this.demo;
     if (!snap || !snap.entryXmlPath) throw new Error('snapshot missing entryXmlPath');
 
-    const sceneDir = snap.entryXmlPath.startsWith('custom_scenes/')
-      ? snap.entryXmlPath.split('/').slice(0, 2).join('/')
-      : null;
+    // Validate before anything is deleted. This path used to be derived with
+    // split('/').slice(0, 2) behind nothing but a startsWith('custom_scenes/')
+    // check, so `custom_scenes/../evil.xml` yielded the directory
+    // `custom_scenes/..` — and the recursive delete below then pointed at the parent
+    // of every saved scene. It is the one MEMFS write path that bypassed all of
+    // sceneWriter's guards.
+    const sceneDir = snapshotSceneDir(snap.entryXmlPath);
 
     if (sceneDir) {
       this._rmrf(`/working/${sceneDir}`);
@@ -392,6 +411,12 @@ export class ParentBridge {
     //
     // A v1 snapshot has no robotPack and skips all of this, which is what keeps
     // projects saved before the agent existed loading unchanged.
+    // Tell the parent we are alive before the slow part. LOAD_PROJECT's timeout is
+    // idle-based and re-armed by SCENE_PROGRESS, but a fully cached pack emits no
+    // progress at all — so without this beat there is nothing to re-arm it with and a
+    // compile-plus-settle had to finish inside the original budget.
+    this._send('SCENE_PROGRESS', { projectId: this.projectId, phase: 'load', done: 0, total: 1 });
+
     let homePose = null;
     if (snap.robotPack?.id && sceneDir) {
       const { robotPacks } = await this._agentModules();
@@ -425,23 +450,37 @@ export class ParentBridge {
 
     if (Array.isArray(snap.files)) {
       for (const f of snap.files) {
-        const full = `/working/${f.path.replace(/^\/+/, '')}`;
+        // Was `f.path.replace(/^\/+/, '')`, which strips only *leading* slashes and
+        // lets every ".." segment through, so a snapshot could write anywhere in
+        // MEMFS. Confine to this snapshot's own scene directory instead. A built-in
+        // scene (sceneDir === null) ships no files, so there is nothing to relax for.
+        if (!sceneDir) {
+          throw new Error(`Snapshot carries files but its entryXmlPath "${snap.entryXmlPath}" `
+            + 'is not a custom scene, so there is nowhere safe to put them.');
+        }
+        const rel = resolveEntryXmlPath(f.path, sceneDir);   // returns sceneDir/<safe rel>
+        const full = `/working/${rel}`;
         this._ensureParentDirs(full);
         const data = f.encoding === 'base64' ? base64ToUint8(f.content) : f.content;
         demo.mujoco.FS.writeFile(full, data);
       }
     }
 
+    // params.scene decides what gets compiled, and READ_SCENE reads it straight back
+    // out to the parent, so it gets the same treatment rather than being trusted.
+    const entryXmlPath = sceneDir
+      ? resolveEntryXmlPath(snap.entryXmlPath, sceneDir)
+      : snap.entryXmlPath;
+
     // Ensure the scene selector exposes this scene.
-    this._ensureSceneOption(snap.sceneName, snap.entryXmlPath);
-    demo.params.scene = snap.entryXmlPath;
+    this._ensureSceneOption(snap.sceneName, entryXmlPath);
     const sceneSelector = document.getElementById('scene-selector');
-    if (sceneSelector) sceneSelector.value = snap.entryXmlPath;
+    if (sceneSelector) sceneSelector.value = entryXmlPath;
 
     // Suppress the hardcoded camera reset for this one reload.
     this.suppressCameraReset = true;
     try {
-      await demo.reloadScene();
+      await demo.reloadScene(entryXmlPath);
     } finally {
       this.suppressCameraReset = false;
     }
@@ -493,7 +532,25 @@ export class ParentBridge {
 
   // ─── handlers for parent commands ─────────────────────────────────────
 
+  /**
+   * Coalesced rather than rejected, which is the opposite of APPLY_SCENE.
+   *
+   * React 18 StrictMode double-effects and fast refresh can legitimately fire this
+   * twice for one project, and the second caller wants the same outcome as the first
+   * — so returning the in-flight promise is right. Running applySnapshot twice
+   * concurrently would rmrf the scene directory out from under the first.
+   */
   async _handleLoadProject(payload) {
+    if (this._loadInFlight) return this._loadInFlight;
+    this._loadInFlight = this._loadProject(payload);
+    try {
+      return await this._loadInFlight;
+    } finally {
+      this._loadInFlight = null;
+    }
+  }
+
+  async _loadProject(payload) {
     let snapshot = payload.snapshot;
     if (!snapshot && payload.snapshotUrl) {
       const res = await fetch(payload.snapshotUrl);
@@ -562,6 +619,28 @@ export class ParentBridge {
     const { sceneName, robotPack = null, files, script, entryXmlPath, settle } = payload;
     const hasFiles = Array.isArray(files) && files.length > 0;
 
+    // Reject rather than queue. writeGeneratedScene begins with rmrf of the scene
+    // directory, so two concurrent applies delete each other's files: the first then
+    // either compiles the second's scene or dies with "entry file was not written",
+    // and demo.params.scene / this.robotPack become last-writer-wins. Queueing would
+    // also hand the caller a diagnostic about a scene it can no longer reason about.
+    // Overlap is likely rather than theoretical, because sendApplyScene's timeout is
+    // idle-based and a cold pack makes a single apply take minutes.
+    if (hasFiles && this._applyInFlight) {
+      const err = new Error('A scene is already being applied. Wait for it to finish and retry.');
+      err.code = 'SCENE_BUSY';
+      throw err;
+    }
+    if (hasFiles) this._applyInFlight = true;
+    try {
+      return await this._applyScene({ sceneName, robotPack, files, script, entryXmlPath, settle, hasFiles }, requestId);
+    } finally {
+      if (hasFiles) this._applyInFlight = false;
+    }
+  }
+
+  async _applyScene({ sceneName, robotPack, files, script, entryXmlPath, settle, hasFiles }, requestId) {
+
     if (!hasFiles) {
       if (typeof script !== 'string') {
         throw new Error('APPLY_SCENE needs files[] to build a scene, or script to set the controller.');
@@ -625,6 +704,10 @@ export class ParentBridge {
       patched: result.patched,
       settled: result.settled,
       robotPack: this._packReference(),
+      // This build never frees mjModel/mjData, so the heap only grows — roughly
+      // 55 MB per reload. Reporting it lets the agent's repair loop notice it is
+      // approaching the 2 GB cap instead of dying at an uncatchable abort.
+      heapBytes: this.demo.heapBytes ?? null,
     };
   }
 

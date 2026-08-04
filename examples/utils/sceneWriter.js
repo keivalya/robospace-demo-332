@@ -6,6 +6,7 @@
 
 import { ensureRobotPack } from './robotPacks.js';
 import { readModelNames } from '../mujocoUtils.js';
+import { assertSafeSceneName, safeRelativePath, resolveEntryXmlPath } from './safePath.js';
 
 export function ensureDir(FS, dirPath) {
   if (!dirPath || dirPath === '/' || FS.analyzePath(dirPath).exists) return;
@@ -36,89 +37,14 @@ export function rmrf(FS, dirPath) {
 // ─── untrusted input ────────────────────────────────────────────────────────
 // sceneName and file paths arrive from a model's tool call. They are used to build
 // MEMFS paths that get rmrf'd and written, so they are the highest-consequence
-// untrusted input in this module: a name that escapes its directory turns a scene
-// write into a delete of whatever is above it.
-
-const SAFE_SCENE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-
-/**
- * A scene name must be a single, ordinary directory name.
- *
- * The earlier check only rejected unexpected *characters*, which let "." and ".."
- * through — both are made entirely of allowed characters. `custom_scenes/..`
- * resolves to `custom_scenes`'s parent, and `custom_scenes/.` to the directory
- * holding every other saved scene, so either one aimed the rmrf at the wrong tree.
- * Reject path semantics, not just characters.
- */
-export function assertSafeSceneName(sceneName) {
-  if (typeof sceneName !== 'string' || !sceneName) {
-    throw new Error('sceneName is required.');
-  }
-  if (sceneName.length > 64) {
-    throw new Error(`sceneName "${sceneName.slice(0, 32)}…" is too long (max 64 characters).`);
-  }
-  if (!SAFE_SCENE_NAME.test(sceneName) || sceneName.includes('..')) {
-    throw new Error(
-      `Invalid sceneName "${sceneName}": must start with a letter or digit and contain only `
-      + 'letters, digits, dot, dash or underscore. It is a single directory name, not a path.',
-    );
-  }
-}
-
-/**
- * Normalises a model-supplied file path to something guaranteed to stay inside the
- * scene directory. Rejects absolute paths, backslashes, and any "." or ".." segment
- * rather than pattern-matching on substrings — `a/../../b` contains no leading ".."
- * but still escapes.
- */
-export function safeRelativePath(input) {
-  const raw = String(input ?? '');
-  if (!raw) throw new Error('File entry is missing a path.');
-  if (raw.includes('\\')) {
-    throw new Error(`Invalid file path "${raw}": use forward slashes.`);
-  }
-  if (raw.startsWith('/')) {
-    throw new Error(`Invalid file path "${raw}": must be relative to the scene directory.`);
-  }
-  const segments = raw.split('/').filter((s) => s !== '');
-  if (!segments.length) throw new Error(`Invalid file path "${raw}".`);
-  for (const seg of segments) {
-    if (seg === '.' || seg === '..') {
-      throw new Error(`Refusing to write outside the scene directory: "${raw}".`);
-    }
-  }
-  return segments.join('/');
-}
-
-/**
- * Resolves a caller-supplied entryXmlPath to a path inside this scene's directory.
- *
- * Callers legitimately pass any of three forms — "scene.xml",
- * "custom_scenes/<name>/scene.xml" (what a previous call returned), or the full
- * "/working/custom_scenes/<name>/scene.xml" — so all three are accepted by
- * trimming a recognised prefix and validating what remains.
- *
- * Note what is deliberately NOT done: a leading slash is not stripped in general.
- * An earlier version did, which defeated safeRelativePath's absolute-path check —
- * "/working/universal_robots_ur5e/scene.xml" was silently re-rooted to
- * "custom_scenes/<name>/working/universal_robots_ur5e/scene.xml" instead of being
- * refused. Confined, but wrong: it turns a caller mistake into a confusing
- * "entry file was not written" failure later. Only a prefix that actually names
- * this scene's directory is removed; anything else absolute is rejected.
- *
- * Exported so the tests exercise this function rather than a reimplementation of
- * it — the duplicate is how the bug above went unnoticed.
- */
-export function resolveEntryXmlPath(entryXmlPath, sceneDir) {
-  const raw = String(entryXmlPath ?? '');
-  if (!raw) throw new Error('entryXmlPath is empty.');
-  for (const prefix of [`${sceneDir}/`, `/${sceneDir}/`, `/working/${sceneDir}/`]) {
-    if (raw.startsWith(prefix)) {
-      return `${sceneDir}/${safeRelativePath(raw.slice(prefix.length))}`;
-    }
-  }
-  return `${sceneDir}/${safeRelativePath(raw)}`;
-}
+// untrusted input here: a name that escapes its directory turns a scene write into a
+// delete of whatever is above it.
+//
+// The guards themselves now live in utils/safePath.js, which has no imports, so
+// ParentBridge can reach for them without dragging in robotPacks → robotManifests.
+// Re-exported because existing callers and test/scene-writer-inputs.test.mjs import
+// them from here.
+export { assertSafeSceneName, safeRelativePath, resolveEntryXmlPath } from './safePath.js';
 
 /** Everything the agent needs to write a controller script against the real model
  *  rather than against guessed actuator names. */
