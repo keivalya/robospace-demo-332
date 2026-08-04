@@ -378,12 +378,33 @@ export function readModelNames(model) {
  * @param {RoboSpaceDemo} parent The three.js Scene Object to add the MuJoCo model elements to
  */
 export async function loadSceneFromURL(mujoco, filename, parent) {
-    // Free the old simulation.
+    // Compile FIRST, before destroying anything.
+    //
+    // This used to free and null model/state/simulation up front and only then
+    // compile, which made a compile failure catastrophic in two ways: the caller was
+    // left with a null model (and render() dereferenced it, killing the animation
+    // loop for the session), and the previously working scene was already gone.
+    //
+    // Compiling first makes a failed load a true no-op — the old robot keeps
+    // rendering and stepping while the caller repairs its XML, which is exactly what
+    // the agent's compile-fail-and-repair loop needs. Safe even though the caller
+    // may already have rmrf'd the scene directory (sceneWriter.writeGeneratedScene
+    // does), because the live model lives in WASM memory, not in MEMFS.
+    const newModel = compileModel(mujoco, "/working/"+filename);
+
+    // Past this point the load cannot fail on the model itself, so it is safe to
+    // tear down the old one.
     if (parent.simulation != null) {
       parent.simulation.free();
       parent.model      = null;
       parent.state      = null;
       parent.simulation = null;
+    }
+    // A drag captured against the old model holds a bodyID that means nothing in the
+    // new one; left in place it becomes a NaN force applied to whatever body now
+    // happens to sit at that index.
+    if (parent.dragStateManager && typeof parent.dragStateManager.reset === 'function') {
+      parent.dragStateManager.reset();
     }
 
     const cleanUpRoot = (rootObj) => {
@@ -417,8 +438,8 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
     }
     parent.mujocoRoot = null;
 
-    // Load in the state from XML.
-    parent.model       = compileModel(mujoco, "/working/"+filename);
+    // Load in the state from XML (compiled above, before the teardown).
+    parent.model       = newModel;
     parent.state       = new mujoco.State(parent.model);
     parent.simulation  = new mujoco.Simulation(parent.model, parent.state);
 
@@ -731,7 +752,16 @@ export async function downloadExampleScenesFolder(mujoco) {
 
   let requests = allFiles.map((url) => fetch("./examples/scenes/" + url));
   let responses = await Promise.all(requests);
+  const failed = [];
   for (let i = 0; i < responses.length; i++) {
+      // Check the status. Without this, a 404 or 500 writes the server's error page
+      // *body* into scene.xml or a .obj, and the failure resurfaces much later as an
+      // inexplicable MJCF_COMPILE_ERROR pointing at the wrong thing entirely. Skip
+      // the file instead: a missing asset produces a compile error that names it.
+      if (!responses[i].ok) {
+          failed.push(`${allFiles[i]} (HTTP ${responses[i].status})`);
+          continue;
+      }
       let split = allFiles[i].split("/");
       let working = '/working/';
       for (let f = 0; f < split.length - 1; f++) {
@@ -745,6 +775,10 @@ export async function downloadExampleScenesFolder(mujoco) {
       } else {
           mujoco.FS.writeFile("/working/" + allFiles[i], await responses[i].text());
       }
+  }
+  if (failed.length) {
+      console.error(`[robospace] ${failed.length} bundled scene file(s) failed to download:\n  `
+        + failed.join('\n  '));
   }
 }
 

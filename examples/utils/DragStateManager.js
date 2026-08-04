@@ -102,6 +102,22 @@ export class DragStateManager {
         this.arrow.visible = false;
         this.mouseDown = false;
     }
+    /**
+     * Drops every reference to the current scene's meshes. Called when a scene is
+     * replaced.
+     *
+     * end() is not enough on its own: it leaves previouslySelected pointing at a
+     * mesh whose geometry and material have just been disposed, and the dblclick
+     * branch in onPointer then writes to `.material.emissive` on it. physicsObject
+     * is the worse one — its bodyID indexes the *old* model, so the render loop
+     * applies a force to whatever body now sits at that index, or reads an
+     * out-of-range mass and drives the whole simulation to NaN.
+     */
+    reset() {
+        this.end();
+        this.previouslySelected = null;
+        this.doubleClick = false;
+    }
     onPointer(evt) {
         if (evt.type == "pointerdown") {
             this.start(evt.clientX, evt.clientY);

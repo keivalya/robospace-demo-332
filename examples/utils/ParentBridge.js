@@ -24,18 +24,63 @@ const PROGRESS_THROTTLE_MS = 120;
 
 // Parent origins we trust. The first allowed origin we see in a HELLO becomes
 // the locked-in counterparty for the rest of the session.
+//
+// This allowlist is the ENTIRE framing control. The demo is served from GitHub
+// Pages, so there is no way to send X-Frame-Options or frame-ancestors, and any
+// page on the internet can put demo.robospace.app in an iframe. Whatever gets past
+// this check can drive APPLY_SCENE, READ_SCENE and REQUEST_SNAPSHOT — i.e. read the
+// user's scene files and Python script straight out of MEMFS, and write new ones.
+//
+// It previously contained /^https:\/\/.*\.vercel\.app$/, which is not a restriction:
+// anyone can deploy to a *.vercel.app subdomain for free. localhost and 127.0.0.1
+// were also live in production, which a malicious local process could use.
+const PRODUCTION_HOST = 'demo.robospace.app';
+
 const PARENT_ORIGIN_ALLOWLIST = [
   'https://app.robospace.app',
   'https://robospace.app',
-  /^https:\/\/.*\.vercel\.app$/,
-  /^http:\/\/localhost:\d+$/,
-  /^http:\/\/127\.0\.0\.1:\d+$/,
 ];
 
+// Dev/preview origins, permitted only when this page is NOT the production deploy.
+const DEV_ORIGIN_ALLOWLIST = [
+  /^http:\/\/localhost:\d+$/,
+  /^http:\/\/127\.0\.0\.1:\d+$/,
+  /^https:\/\/[a-z0-9-]+\.vercel\.app$/,
+];
+
+function isProductionDeploy() {
+  try {
+    return window.location.hostname === PRODUCTION_HOST;
+  } catch (_) {
+    return true;   // fail closed
+  }
+}
+
 function originAllowed(origin) {
-  return PARENT_ORIGIN_ALLOWLIST.some((entry) =>
-    typeof entry === 'string' ? entry === origin : entry.test(origin)
-  );
+  const test = (entry) => (typeof entry === 'string' ? entry === origin : entry.test(origin));
+  if (PARENT_ORIGIN_ALLOWLIST.some(test)) return true;
+  return !isProductionDeploy() && DEV_ORIGIN_ALLOWLIST.some(test);
+}
+
+/**
+ * Reads the nonce this page was framed with, if any.
+ *
+ * A Vercel preview deploy has an unpredictable origin, so it cannot be allowlisted
+ * without a wildcard — and the wildcard is what made this exploitable. Instead the
+ * parent generates a random nonce, puts it in the iframe URL it builds, and echoes
+ * it in HELLO. Only a parent that could set this page's own URL knows it, which is
+ * exactly the property we need: a stranger who frames us cannot guess it.
+ *
+ * When the page carries no nonce (direct visit, or an older parent), the origin
+ * allowlist alone decides — so this strengthens preview deploys without breaking
+ * the production origins above.
+ */
+function expectedNonce() {
+  try {
+    return new URLSearchParams(window.location.search).get('bridgeNonce');
+  } catch (_) {
+    return null;
+  }
 }
 
 function uint8ToBase64(bytes) {
@@ -123,10 +168,21 @@ export class ParentBridge {
     const data = event.data;
     if (!data || data.source !== 'robospace' || typeof data.type !== 'string') return;
 
+    // Only our embedder may speak to us. Without this, any same-origin-allowlisted
+    // window — an opener, or another frame in the same tab — could impersonate the
+    // parent, since event.origin says nothing about which window sent the message.
+    if (event.source !== window.parent) return;
+
     if (!this.parentOrigin) {
       if (data.type !== 'HELLO') return;
       if (!originAllowed(event.origin)) {
         console.warn('[ParentBridge] HELLO from disallowed origin:', event.origin);
+        return;
+      }
+      // If this page was framed with a nonce, HELLO must echo it. See expectedNonce().
+      const nonce = expectedNonce();
+      if (nonce && data.payload?.bridgeNonce !== nonce) {
+        console.warn('[ParentBridge] HELLO did not present the expected bridgeNonce; ignoring.');
         return;
       }
       this.parentOrigin = event.origin;

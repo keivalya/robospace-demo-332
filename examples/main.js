@@ -8,6 +8,7 @@ import { FileUploadManager } from './utils/FileUploadManager.js';
 import { LivePlotter } from './utils/LivePlotter.js';
 import { ParentBridge } from './utils/ParentBridge.js';
 import { mujocoLogHooks } from './utils/mujocoLog.js';
+import { resolveInitialScene, readStoredScene, forgetStoredScene, DEFAULT_SCENE } from './utils/initialScene.js';
 
 // index.html loads this module as `main.js?v=N`. Propagate that N to every
 // dynamic import() below so bumping the single number in index.html invalidates
@@ -20,6 +21,13 @@ const MODULE_VERSION = (() => {
 })();
 const versioned = (specifier) => (MODULE_VERSION ? `${specifier}?v=${MODULE_VERSION}` : specifier);
 
+// Upper bound on physics steps in a single animation frame. The catch-up loop is
+// driven by wall clock, so with a small enough timestep one frame can ask for tens
+// of thousands of steps and the tab stops responding. 35 ms of sim time at the
+// default 2 ms timestep is ~18 steps, so this is ~50x headroom for fast machines
+// and a hard stop for pathological models. settle() caps itself the same way.
+const MAX_STEPS_PER_FRAME = 1000;
+
 // ─── bootstrap diagnostics ───────────────────────────────────────────────────
 // Everything below runs at module top level, so a single throw or a fetch that
 // never settles leaves the page blank with nothing to go on — which is a
@@ -27,6 +35,7 @@ const versioned = (specifier) => (MODULE_VERSION ? `${specifier}?v=${MODULE_VERS
 // stage, surface any failure in the page itself, and time out rather than hang.
 
 let bootStage = 'starting';
+let bootDone = false;
 const setStage = (stage) => { bootStage = stage; window.__robospaceBootStage = stage; };
 
 function showBootError(what, detail) {
@@ -46,14 +55,47 @@ function showBootError(what, detail) {
   const hint = document.createElement('div');
   hint.style.cssText = 'color:#9aa4b2;';
   hint.textContent = 'If this mentions a blocked or failed script, check that the page is being served '
-    + 'without a Cross-Origin-Embedder-Policy header (npm run dev sends none), and that no older '
-    + 'server is still bound to the port.';
-  box.append(title, msg, hint);
+    + 'without a Cross-Origin-Embedder-Policy header (python3 -m http.server sends none), and that no '
+    + 'older server is still bound to the port.';
+  // Dismissable: this panel covers the whole viewport, so if it ever fires while
+  // the simulator is actually usable the user must be able to get back to it.
+  const close = document.createElement('button');
+  close.textContent = 'Dismiss';
+  close.style.cssText = 'margin-top:18px;padding:6px 14px;background:#2c3540;color:#dfe6ee;'
+    + 'border:1px solid #3d4854;border-radius:6px;cursor:pointer;font:inherit;';
+  close.addEventListener('click', () => box.remove());
+  box.append(title, msg, hint, close);
   (document.body || document.documentElement).appendChild(box);
 }
 
-window.addEventListener('error', (e) => showBootError('Uncaught error', e.error || e.message));
-window.addEventListener('unhandledrejection', (e) => showBootError('Unhandled promise rejection', e.reason));
+/**
+ * Routes an uncaught error to whichever surface is appropriate.
+ *
+ * Before boot finishes, a failure means a blank page with nothing to go on, so it
+ * earns the full-screen treatment — that panel exists because a silent blank screen
+ * cost real debugging time.
+ *
+ * After boot, the situation is inverted. An uncaught error is usually one bad scene
+ * or one bad script, the simulator is still there, and painting an undismissable
+ * full-screen overlay over a working app hides it for the rest of the session. That
+ * is what a failed MJCF compile did — and a failed compile is the *expected* case
+ * when the agent repairs a scene.
+ */
+function reportUncaught(what, detail) {
+  if (bootDone) {
+    console.error(`[robospace] ${what}:`, detail);
+    const demo = window._roboDemo;
+    if (demo && typeof demo.showError === 'function') {
+      const text = detail && detail.message ? detail.message : String(detail);
+      demo.showError(`${what}: ${text}`);
+      return;
+    }
+  }
+  showBootError(what, detail);
+}
+
+window.addEventListener('error', (e) => reportUncaught('Uncaught error', e.error || e.message));
+window.addEventListener('unhandledrejection', (e) => reportUncaught('Unhandled promise rejection', e.reason));
 
 /** Rejects instead of hanging forever, so a stalled fetch is reported. */
 function withTimeout(promise, ms, label) {
@@ -78,10 +120,7 @@ const mujoco = await load_mujoco(mujocoLogHooks);
 
 // Set up Emscripten's Virtual File System
 const STORAGE_KEY_SCENE = 'robospace_last_scene';
-var initialScene = localStorage.getItem(STORAGE_KEY_SCENE) || "universal_robots_ur5e/scene.xml";
-if (initialScene.startsWith("custom_scenes/")) {
-  initialScene = "universal_robots_ur5e/scene.xml";
-}
+var initialScene = resolveInitialScene(readStoredScene(localStorage));
 setStage('setting up the virtual filesystem');
 mujoco.FS.mkdir('/working');
 mujoco.FS.mount(mujoco.MEMFS, { root: '.' }, '/working');
@@ -92,23 +131,45 @@ setStage('downloading the bundled example scenes');
 await withTimeout(downloadExampleScenesFolder(mujoco), 30000, 'Downloading the bundled example scenes');
 
 setStage(`fetching the initial scene (${initialScene})`);
-const initialSceneResponse = await withTimeout(
-  fetch("./examples/scenes/" + initialScene), 15000, `Fetching ${initialScene}`,
-);
-if (!initialSceneResponse.ok) {
-  throw new Error(`Could not fetch examples/scenes/${initialScene}: HTTP ${initialSceneResponse.status}`);
+async function fetchScene(name) {
+  const res = await withTimeout(fetch("./examples/scenes/" + name), 15000, `Fetching ${name}`);
+  if (!res.ok) throw new Error(`Could not fetch examples/scenes/${name}: HTTP ${res.status}`);
+  return res.text();
 }
-mujoco.FS.writeFile("/working/" + initialScene, await initialSceneResponse.text());
+
+let initialSceneText;
+try {
+  initialSceneText = await fetchScene(initialScene);
+} catch (err) {
+  // A scene we cannot load must cost one degraded boot, never a permanent brick.
+  // This used to throw at module top level with nothing clearing the stored key,
+  // so the page then failed to boot on every subsequent load.
+  console.error(`[robospace] falling back to ${DEFAULT_SCENE}:`, err);
+  forgetStoredScene(localStorage);
+  if (initialScene === DEFAULT_SCENE) throw err;
+  initialScene = DEFAULT_SCENE;
+  setStage(`fetching the default scene (${initialScene})`);
+  initialSceneText = await fetchScene(initialScene);
+}
+mujoco.FS.writeFile("/working/" + initialScene, initialSceneText);
 
 export class RoboSpaceDemo {
   constructor() {
     this.mujoco = mujoco;
     this._loadQueue = Promise.resolve();
 
-    // Load in the state from XML
-    this.model = compileModel(mujoco, "/working/" + initialScene);
-    this.state = new mujoco.State(this.model);
-    this.simulation = new mujoco.Simulation(this.model, this.state);
+    // Deliberately NOT loaded here. init() calls loadSceneFromURL for this very
+    // same scene moments later, so compiling it in the constructor built an entire
+    // mjModel + mjData that was then thrown away — and thrown away is literal: this
+    // build's Simulation::free() releases only the two 8-byte wrapper structs, so
+    // mj_deleteModel/mj_deleteData never run and the whole allocation leaks. That
+    // was ~55 MB of unreclaimable heap on every page load.
+    //
+    // Safe because render() now returns early while these are null (see
+    // _renderFrame), and pythonIntegration's bridge functions already null-guard.
+    this.model = null;
+    this.state = null;
+    this.simulation = null;
 
     // Define Random State Variables
     this.params = { scene: initialScene, paused: false, help: false, ctrlnoiserate: 0.0, ctrlnoisestd: 0.0, keyframeNumber: 0 };
@@ -116,6 +177,8 @@ export class RoboSpaceDemo {
     this.bodies = {}, this.lights = {};
     this.tmpVec = new THREE.Vector3();
     this.tmpQuat = new THREE.Quaternion();
+    this._frameCount = 0;      // monotonic; the stall watchdog reads it
+    this._renderFaults = 0;    // reset on every successful scene load
     this._sceneReady = false;
     this._pythonReady = false;
     this.setupStatusIndicator();
@@ -152,6 +215,7 @@ export class RoboSpaceDemo {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // default THREE.PCFShadowMap
     this.renderer.setAnimationLoop(this.render.bind(this));
+    this._startRenderWatchdog();
 
     this.container.appendChild(this.renderer.domElement);
 
@@ -231,7 +295,9 @@ export class RoboSpaceDemo {
 
     sceneSelector.addEventListener('change', async (e) => {
       this.params.scene = e.target.value;
-      localStorage.setItem(STORAGE_KEY_SCENE, this.params.scene);
+      // Guarded for the same reason the read is: localStorage throws outright when
+      // storage is partitioned, which is how this page runs inside the dashboard.
+      try { localStorage.setItem(STORAGE_KEY_SCENE, this.params.scene); } catch (_) { /* not worth failing a load over */ }
       try {
         await this.reloadScene();
         this.parentBridge?.emitDirty('scene');
@@ -406,17 +472,29 @@ export class RoboSpaceDemo {
     }
   }
 
-  async reloadScene() {
+  /**
+   * @param {string} [sceneOverride] Scene to load. Defaults to params.scene *as it
+   *   is now*, captured here rather than read inside the queued job below.
+   *
+   *   The queue serialises execution but not intent: params.scene has five writers
+   *   (the selector, sceneWriter, ParentBridge's snapshot apply, the uploader), so a
+   *   job that read it at run time would load whatever the last writer set — and
+   *   then resolve successfully, leaving the caller believing its own scene loaded.
+   */
+  async reloadScene(sceneOverride) {
+    const scene = sceneOverride ?? this.params.scene;
     this.clearError();
     if (this.setSimStatus) this.setSimStatus('loading');
 
     const nextPromise = this._loadQueue.then(async () => {
       try {
         [this.model, this.state, this.simulation, this.bodies, this.lights] =
-          await loadSceneFromURL(this.mujoco, this.params.scene, this);
+          await loadSceneFromURL(this.mujoco, scene, this);
         this.simulation.forward();
+        this.params.scene = scene;    // source of truth now matches what loaded
+        this._renderFaults = 0;       // a good scene earns a clean slate
       } catch (error) {
-        this.showError(`Failed to load scene "${this.params.scene}": ${this.formatError(error)}`);
+        this.showError(`Failed to load scene "${scene}": ${this.formatError(error)}`);
         if (this.setSimStatus) this.setSimStatus('error');
         throw error;
       }
@@ -567,13 +645,118 @@ export class RoboSpaceDemo {
     this.renderer.setSize(width, height);
   }
 
+  /**
+   * Crash boundary around the frame.
+   *
+   * three.js's animation driver re-requests the frame *after* this callback
+   * returns (WebGLAnimation.onAnimationFrame), so a throw here does not drop one
+   * frame — it ends rendering for the rest of the session, and `isAnimating` stays
+   * true so start() refuses to restart it. A failed MJCF compile used to land
+   * exactly here, which made the agent's expected case fatal.
+   *
+   * This reports through two channels rather than swallowing: the error panel, and
+   * window.onerror via a fresh task so the rAF chain above stays intact.
+   */
   render(timeMS) {
+    try {
+      this._renderFrame(timeMS);
+      this._frameCount++;
+    } catch (err) {
+      this._onRenderFault(err);
+    }
+  }
+
+  /**
+   * Last-resort recovery for a stopped animation loop.
+   *
+   * three.js cannot restart one by itself: once the callback throws, the frame is
+   * never re-requested and `isAnimating` stays true, so `setAnimationLoop(cb)`
+   * early-returns. Passing null first is the only sequence that revives it. The
+   * crash boundary above should mean this never fires — it is here because a frozen
+   * viewport with no explanation is the single worst outcome for this app.
+   */
+  _startRenderWatchdog() {
+    let lastSeen = -1;
+    setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        lastSeen = this._frameCount;
+        return;
+      }
+      if (this._frameCount === lastSeen) {
+        console.warn('[robospace] render loop stalled; restarting it');
+        try {
+          this.renderer.setAnimationLoop(null);
+          this.renderer.setAnimationLoop(this.render.bind(this));
+        } catch (e) {
+          console.error('[robospace] could not restart the render loop:', e);
+        }
+      }
+      lastSeen = this._frameCount;
+    }, 2000);
+  }
+
+  _onRenderFault(err) {
+    this._renderFaults++;
+    console.error(`[robospace] render fault ${this._renderFaults}:`, err);
+    if (this._renderFaults === 1) {
+      this.showError(`Rendering error: ${this.formatError(err)}`);
+      setTimeout(() => { throw err; });     // reaches window.onerror without unwinding rAF
+    }
+    if (this._renderFaults >= 3 && !this.params.paused) {
+      this.params.paused = true;
+      if (this.setSimStatus) this.setSimStatus('error');
+      this.showError('Rendering paused after repeated errors. Load a scene to resume.');
+    }
+  }
+
+  /**
+   * A drag captured before a scene reload still holds a bodyID from the old model.
+   * Indexing the new model with it returns undefined, which becomes a NaN force and
+   * takes the entire simulation non-finite with no error anywhere. Validate instead
+   * of trusting, and drop the stale drag when it does not fit.
+   */
+  _validDragBody() {
+    const dragged = this.dragStateManager?.physicsObject;
+    if (!dragged || !dragged.bodyID) return -1;
+    const b = dragged.bodyID;
+    if (b > 0 && b < this.model.nbody) return b;
+    if (typeof this.dragStateManager.end === 'function') this.dragStateManager.end();
+    return -1;
+  }
+
+  /** Cheap periodic tripwire. A silent NaN is the worst failure mode in this app:
+   *  the scene simply stops responding and nothing is logged. */
+  _checkFinite() {
+    if (!this.simulation || Number.isFinite(this.simulation.qpos[0])) return;
+    console.error('[robospace] simulation state went non-finite; pausing and resetting');
+    this.params.paused = true;
+    try { this.simulation.resetData(); this.simulation.forward(); } catch (_) { /* best effort */ }
+    if (this.setSimStatus) this.setSimStatus('error');
+    this.showError('The simulation became numerically unstable (NaN) and has been paused and reset. '
+      + 'This usually means interpenetrating geometry or an extreme applied force.');
+  }
+
+  _renderFrame(timeMS) {
     this.controls.update();
+
+    // A failed compile leaves BOTH model and simulation null, because
+    // loadSceneFromURL frees the old simulation before it compiles the new one.
+    // Keep drawing so the camera still orbits; the error panel carries the reason.
+    if (!this.model || !this.simulation) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
 
     if (!this.params["paused"]) {
       let timestep = this.model.getOptions().timestep;
+      if (!(timestep > 0)) {
+        // `mujoco_time += 0` never reaches timeMS, so the loop below would spin
+        // forever and hang the tab rather than failing.
+        throw new Error(`Refusing to step: model timestep is ${timestep}.`);
+      }
       if (timeMS - this.mujoco_time > 35.0) { this.mujoco_time = timeMS; }
-      while (this.mujoco_time < timeMS) {
+      let budget = MAX_STEPS_PER_FRAME;
+      while (this.mujoco_time < timeMS && budget-- > 0) {
 
         // Jitter the control state with gaussian random noise
         if (this.params["ctrlnoisestd"] > 0.0) {
@@ -587,8 +770,8 @@ export class RoboSpaceDemo {
         }
 
         for (let i = 0; i < this.simulation.qfrc_applied.length; i++) { this.simulation.qfrc_applied[i] = 0.0; }
-        let dragged = this.dragStateManager.physicsObject;
-        if (dragged && dragged.bodyID) {
+        const bodyID = this._validDragBody();
+        if (bodyID > 0) {
           for (let b = 0; b < this.model.nbody; b++) {
             if (this.bodies[b]) {
               getPosition(this.simulation.xpos, b, this.bodies[b].position);
@@ -596,11 +779,15 @@ export class RoboSpaceDemo {
               this.bodies[b].updateWorldMatrix();
             }
           }
-          let bodyID = dragged.bodyID;
           this.dragStateManager.update(); // Update the world-space force origin
-          let force = toMujocoPos(this.dragStateManager.currentWorld.clone().sub(this.dragStateManager.worldHit).multiplyScalar(this.model.body_mass[bodyID] * 250));
-          let point = toMujocoPos(this.dragStateManager.worldHit.clone());
-          this.simulation.applyForce(force.x, force.y, force.z, 0, 0, 0, point.x, point.y, point.z, bodyID);
+          const mass = this.model.body_mass[bodyID];
+          if (Number.isFinite(mass)) {
+            let force = toMujocoPos(this.dragStateManager.currentWorld.clone().sub(this.dragStateManager.worldHit).multiplyScalar(mass * 250));
+            let point = toMujocoPos(this.dragStateManager.worldHit.clone());
+            this.simulation.applyForce(force.x, force.y, force.z, 0, 0, 0, point.x, point.y, point.z, bodyID);
+          } else if (typeof this.dragStateManager.end === 'function') {
+            this.dragStateManager.end();
+          }
         }
 
         this.simulation.step();
@@ -612,12 +799,12 @@ export class RoboSpaceDemo {
 
         this.mujoco_time += timestep * 1000.0;
       }
+      if ((this._frameCount & 63) === 0) this._checkFinite();
 
     } else if (this.params["paused"]) {
       this.dragStateManager.update(); // Update the world-space force origin
-      let dragged = this.dragStateManager.physicsObject;
-      if (dragged && dragged.bodyID) {
-        let b = dragged.bodyID;
+      const b = this._validDragBody();
+      if (b > 0) {
         getPosition(this.simulation.xpos, b, this.tmpVec, false); // Get raw coordinate from MuJoCo
         getQuaternion(this.simulation.xquat, b, this.tmpQuat, false); // Get raw coordinate from MuJoCo
 
@@ -635,10 +822,15 @@ export class RoboSpaceDemo {
           // Set the root body's position directly...
           let root = this.model.body_rootid[b];
           let addr = this.model.jnt_qposadr[this.model.body_jntadr[root]];
-          let pos = this.simulation.qpos;
-          pos[addr + 0] += offset.x;
-          pos[addr + 1] += offset.y;
-          pos[addr + 2] += offset.z;
+          // A body with no joint gives body_jntadr === -1, so addr is undefined and
+          // `pos[NaN] += x` writes nothing while silently poisoning nothing — but a
+          // partially-valid addr would corrupt qpos. Only write a real slot.
+          if (Number.isInteger(addr) && addr >= 0 && addr + 2 < this.simulation.qpos.length) {
+            let pos = this.simulation.qpos;
+            pos[addr + 0] += offset.x;
+            pos[addr + 1] += offset.y;
+            pos[addr + 2] += offset.z;
+          }
         }
       }
 

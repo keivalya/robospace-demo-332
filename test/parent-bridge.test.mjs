@@ -27,7 +27,9 @@ const messageListeners = new Set();
 let sent = [];
 
 globalThis.window = {
-  location: { search: '', origin: 'https://demo.robospace.app' },
+  // `hostname` gates the dev-origin allowlist and `search` carries the bridge nonce,
+  // so both are read by ParentBridge and both are mutated by the tests below.
+  location: { search: '', origin: 'https://demo.robospace.app', hostname: 'localhost' },
   addEventListener: (type, fn) => { if (type === 'message') messageListeners.add(fn); },
   removeEventListener: (type, fn) => messageListeners.delete(fn),
   parent: { postMessage: (msg, origin) => sent.push({ msg, origin }) },
@@ -156,8 +158,15 @@ function createFakeDemo() {
 let idCounter = 0;
 const nextId = () => `t_${++idCounter}`;
 
-function deliver(type, payload, { origin = PARENT_ORIGIN, id = nextId() } = {}) {
-  const event = { origin, data: { source: 'robospace', v: 1, type, id, payload } };
+/**
+ * `source` defaults to window.parent because that is what a real browser sets for a
+ * message posted by the embedder, and ParentBridge requires it: event.origin says
+ * nothing about *which* window sent a message, so without the source check any other
+ * frame on an allowlisted origin could impersonate the parent. Omitting it here
+ * silently dropped every message and failed 43 assertions.
+ */
+function deliver(type, payload, { origin = PARENT_ORIGIN, id = nextId(), source = window.parent } = {}) {
+  const event = { origin, source, data: { source: 'robospace', v: 1, type, id, payload } };
   for (const fn of messageListeners) fn(event);
   return id;
 }
@@ -211,6 +220,88 @@ console.log('handshake');
   await new Promise((r) => setTimeout(r, 50));
   check(repliesTo(id).length === 0, 'APPLY_SCENE from a non-locked origin is ignored');
   bridge.robotPack = null;
+}
+
+// ─── framing controls ───────────────────────────────────────────────────────
+// This allowlist is the ENTIRE framing control: the demo is served from GitHub
+// Pages, so it cannot send frame-ancestors and any page may embed it. Whatever gets
+// past these checks can read the user's scene files and Python script out of MEMFS.
+
+console.log('\nframing controls');
+{
+  // event.origin identifies an origin, not a window. Another frame or an opener on
+  // an allowlisted origin must not be able to pose as our embedder.
+  messageListeners.clear();
+  sent = [];
+  const bridge = new ParentBridge(createFakeDemo());
+  deliver('HELLO', { parentOrigin: PARENT_ORIGIN }, { source: { postMessage() {} } });
+  await new Promise((r) => setTimeout(r, 20));
+  check(typed('READY').length === 0, 'HELLO from a window that is not window.parent is ignored');
+  check(bridge.parentOrigin === null, 'and no origin gets locked in');
+}
+
+{
+  // A *.vercel.app preview has an unpredictable origin, so it cannot be allowlisted
+  // without a wildcard — and a wildcard is not a restriction, since anyone can deploy
+  // there. The nonce lives only in the URL we were framed with, so only our real
+  // embedder knows it.
+  window.location.search = '?bridgeNonce=secret123';
+  try {
+    messageListeners.clear();
+    sent = [];
+    const bridge = new ParentBridge(createFakeDemo());
+    deliver('HELLO', { parentOrigin: PARENT_ORIGIN });
+    await new Promise((r) => setTimeout(r, 20));
+    check(typed('READY').length === 0, 'HELLO without the expected nonce is rejected');
+    check(bridge.parentOrigin === null, 'and the origin stays unlocked');
+
+    deliver('HELLO', { parentOrigin: PARENT_ORIGIN, bridgeNonce: 'wrong' });
+    await new Promise((r) => setTimeout(r, 20));
+    check(typed('READY').length === 0, 'HELLO with the wrong nonce is rejected');
+
+    deliver('HELLO', { parentOrigin: PARENT_ORIGIN, bridgeNonce: 'secret123' });
+    await new Promise((r) => setTimeout(r, 20));
+    check(typed('READY').length === 1, 'HELLO with the right nonce is accepted');
+  } finally {
+    window.location.search = '';
+  }
+}
+
+{
+  // localhost and 127.0.0.1 were live in the production allowlist.
+  window.location.hostname = 'demo.robospace.app';
+  try {
+    for (const origin of ['http://localhost:3000', 'http://127.0.0.1:8080', 'https://anyone.vercel.app']) {
+      messageListeners.clear();
+      sent = [];
+      const bridge = new ParentBridge(createFakeDemo());
+      deliver('HELLO', { parentOrigin: origin }, { origin });
+      await new Promise((r) => setTimeout(r, 20));
+      check(typed('READY').length === 0 && bridge.parentOrigin === null,
+        `production rejects ${origin}`);
+    }
+    // The real parent origins must still work in production.
+    messageListeners.clear();
+    sent = [];
+    const bridge = new ParentBridge(createFakeDemo());
+    deliver('HELLO', { parentOrigin: PARENT_ORIGIN });
+    await new Promise((r) => setTimeout(r, 20));
+    check(typed('READY').length === 1 && bridge.parentOrigin === PARENT_ORIGIN,
+      'production still accepts https://app.robospace.app');
+  } finally {
+    window.location.hostname = 'localhost';
+  }
+}
+
+{
+  // Off production, localhost must still connect or local development stops working.
+  messageListeners.clear();
+  sent = [];
+  const bridge = new ParentBridge(createFakeDemo());
+  deliver('HELLO', { parentOrigin: 'http://localhost:8001' }, { origin: 'http://localhost:8001' });
+  await new Promise((r) => setTimeout(r, 20));
+  check(typed('READY').length === 1, 'localhost is accepted when not the production deploy');
+  check(bridge.parentOrigin === 'http://localhost:8001', 'and locks in as the counterparty');
 }
 
 console.log('\nAPPLY_SCENE — scene write');
