@@ -9,6 +9,7 @@ import { LivePlotter } from './utils/LivePlotter.js';
 import { ParentBridge } from './utils/ParentBridge.js';
 import { mujocoLogHooks } from './utils/mujocoLog.js';
 import { resolveInitialScene, readStoredScene, forgetStoredScene, DEFAULT_SCENE } from './utils/initialScene.js';
+import { SimClock } from './utils/simClock.js';
 
 // index.html loads this module as `main.js?v=N`. Propagate that N to every
 // dynamic import() below so bumping the single number in index.html invalidates
@@ -173,12 +174,21 @@ export class RoboSpaceDemo {
 
     // Define Random State Variables
     this.params = { scene: initialScene, paused: false, help: false, ctrlnoiserate: 0.0, ctrlnoisestd: 0.0, keyframeNumber: 0 };
-    this.mujoco_time = 0.0;
+    this.mujoco_time = 0.0;     // wall-clock catch-up accumulator for render(); NOT sim time
+    this.simClock = new SimClock();
     this.bodies = {}, this.lights = {};
     this.tmpVec = new THREE.Vector3();
     this.tmpQuat = new THREE.Quaternion();
     this._frameCount = 0;      // monotonic; the stall watchdog reads it
     this._renderFaults = 0;    // reset on every successful scene load
+    // Resolved at the end of each rendered frame. This is what lets a Python control
+    // loop advance exactly one simulation frame per iteration — see robospaceNextFrame.
+    this._frameWaiters = [];
+    // Recorded qpos frames awaiting playback. A synchronous script steps the physics far
+    // faster than real time and records as it goes; the render loop then plays the
+    // recording back at wall-clock speed, which is what lets the whole motion API be
+    // await-free without the user losing sight of the motion.
+    this.playback = null;
     this._sceneReady = false;
     this._pythonReady = false;
     this.setupStatusIndicator();
@@ -326,6 +336,7 @@ export class RoboSpaceDemo {
       if (this.simulation) {
         this.simulation.resetData();
         this.simulation.forward();
+        this.simClock.reset(0);
       }
     });
 
@@ -422,18 +433,13 @@ export class RoboSpaceDemo {
 
   async _populateExamplesWhenReady() {
     try {
-      const { PYTHON_EXAMPLES } = await import(versioned('./pythonIntegration.js'));
+      const { PYTHON_EXAMPLES, EXAMPLE_LABELS } = await import(versioned('./pythonIntegration.js'));
       const host = document.getElementById('ide-examples-list');
       if (!host || !PYTHON_EXAMPLES) return;
-      const labels = {
-        basic_control:   'Basic Control',
-        sine_wave:       'Sine Wave',
-        walking_pattern: 'Walking Pattern',
-        pd_control:      'PD Controller',
-        oscillation:     'Multi-freq Oscillation',
-        info:            'Print System Info',
-      };
-      Object.entries(labels).forEach(([key, label]) => {
+      // Ordered roughly easiest-first. Any example missing from this map is silently
+      // absent from the menu, so EXAMPLE_LABELS lives beside the examples themselves —
+      // two lists in two files is how load_robot and load_scene stayed unlisted.
+      Object.entries(EXAMPLE_LABELS).forEach(([key, label]) => {
         if (!PYTHON_EXAMPLES[key]) return;
         const btn = document.createElement('button');
         btn.className = 'ide-dropdown-item';
@@ -493,6 +499,7 @@ export class RoboSpaceDemo {
         this.simulation.forward();
         this.params.scene = scene;    // source of truth now matches what loaded
         this._renderFaults = 0;       // a good scene earns a clean slate
+        this.simClock.reset(0);       // a new model means a new clock
       } catch (error) {
         this.showError(`Failed to load scene "${scene}": ${this.formatError(error)}`);
         if (this.setSimStatus) this.setSimStatus('error');
@@ -730,7 +737,11 @@ export class RoboSpaceDemo {
     if (!this.simulation || Number.isFinite(this.simulation.qpos[0])) return;
     console.error('[robospace] simulation state went non-finite; pausing and resetting');
     this.params.paused = true;
-    try { this.simulation.resetData(); this.simulation.forward(); } catch (_) { /* best effort */ }
+    try {
+      this.simulation.resetData();
+      this.simulation.forward();
+      this.simClock.reset(0);
+    } catch (_) { /* best effort */ }
     if (this.setSimStatus) this.setSimStatus('error');
     this.showError('The simulation became numerically unstable (NaN) and has been paused and reset. '
       + 'This usually means interpenetrating geometry or an extreme applied force.');
@@ -744,6 +755,35 @@ export class RoboSpaceDemo {
     // Keep drawing so the camera still orbits; the error panel carries the reason.
     if (!this.model || !this.simulation) {
       this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    // Playing back a recording takes precedence over stepping. A synchronous script has
+    // already advanced the physics to its end state; replaying the frames it recorded is
+    // how the user sees the motion that got there. Stepping as well would race it.
+    if (!this.params["paused"] && this.playback) {
+      const { frames } = this.playback;
+      const q = frames[this.playback.index++];
+      if (q) {
+        this.simulation.qpos.set(q);
+        this.simulation.qvel.fill(0);      // a replay is kinematic, not re-simulated
+        this.simulation.forward();
+      }
+      if (this.playback.index >= frames.length) {
+        // Restore the true dynamic state the script actually left behind, so anything
+        // read after playback matches what the script computed.
+        const final = this.playback.finalState;
+        if (final) {
+          this.simulation.qpos.set(final.qpos);
+          this.simulation.qvel.set(final.qvel);
+          this.simulation.forward();
+        }
+        this.playback = null;
+        this.mujoco_time = 0;              // force one resync rather than a catch-up burst
+      }
+      this._syncTransforms();
+      this.renderer.render(this.scene, this.camera);
+      this._releaseFrameWaiters();
       return;
     }
 
@@ -791,6 +831,7 @@ export class RoboSpaceDemo {
         }
 
         this.simulation.step();
+        this.simClock.advance(1, timestep);
 
         // Feed live plotter (first 8 qpos values)
         if (this.livePlotter) {
@@ -837,6 +878,16 @@ export class RoboSpaceDemo {
       this.simulation.forward();
     }
 
+    this._syncTransforms();
+
+    // Render!
+    this.renderer.render(this.scene, this.camera);
+    this._releaseFrameWaiters();
+  }
+
+  /** Copies MuJoCo's poses onto the three.js objects. Shared by the stepping path and
+   *  the playback path, which is why it is not inline. */
+  _syncTransforms() {
     // Update body transforms.
     for (let b = 0; b < this.model.nbody; b++) {
       if (this.bodies[b]) {
@@ -886,9 +937,19 @@ export class RoboSpaceDemo {
       this.mujocoRoot.cylinders.instanceMatrix.needsUpdate = true;
       this.mujocoRoot.spheres.instanceMatrix.needsUpdate = true;
     }
+  }
 
-    // Render!
-    this.renderer.render(this.scene, this.camera);
+  /** Releases anything awaiting a frame. Called after rendering, so a waiter observes
+   *  the physics and poses of the frame just drawn rather than the previous one. The
+   *  array is swapped out first: a resolver may synchronously queue another wait, and
+   *  appending to the array being iterated would spin forever. */
+  _releaseFrameWaiters() {
+    if (!this._frameWaiters.length) return;
+    const waiters = this._frameWaiters;
+    this._frameWaiters = [];
+    for (const resolve of waiters) {
+      try { resolve(); } catch (e) { console.error('[robospace] frame waiter threw:', e); }
+    }
   }
 }
 
@@ -914,6 +975,17 @@ window.robospaceListRobots = () => {
   return ['franka_panda', 'stretch_3'];
 };
 
+// These loaders are driven from the Python editor as often as from the console, and a
+// 33-73 MB download reported only to devtools looks like a hang to someone watching
+// the output panel. robospaceLog mirrors to both; it is defined by
+// initializePythonEnvironment, so fall back to the console before Pyodide is up.
+const say = (text, level = 'log') => {
+  if (typeof window.robospaceLog === 'function') window.robospaceLog(text, level);
+  else if (level === 'error') console.error(text);
+  else if (level === 'warn') console.warn(text);
+  else console.log(text);
+};
+
 window.robospaceLoadRobot = async (packId = 'franka_panda') => {
   const { writeGeneratedScene, defaultRobotScene } = await import(versioned('./utils/sceneWriter.js'));
   const { ROBOT_MANIFESTS } = await import(versioned('./utils/robotPacks.js'));
@@ -925,10 +997,10 @@ window.robospaceLoadRobot = async (packId = 'franka_panda') => {
     ? ROBOT_MANIFESTS[packId]
     : null;
   if (!manifest) {
-    console.error(`Unknown robot "${packId}". Try one of: ${Object.keys(ROBOT_MANIFESTS).join(', ')}`);
+    say(`Unknown robot "${packId}". Try one of: ${Object.keys(ROBOT_MANIFESTS).join(', ')}`, 'error');
     return null;
   }
-  console.log(`Loading ${packId}: ${manifest.files.length} files, ${(manifest.totalBytes / 1048576).toFixed(1)} MB (cached after the first run)`);
+  say(`Loading ${packId}: ${manifest.files.length} files, ${(manifest.totalBytes / 1048576).toFixed(1)} MB (cached after the first run)`);
 
   let lastLogged = 0;
   const started = performance.now();
@@ -940,21 +1012,21 @@ window.robospaceLoadRobot = async (packId = 'franka_panda') => {
       onProgress: ({ done, total, bytes, totalBytes }) => {
         if (bytes - lastLogged < totalBytes / 5 && done !== total) return;
         lastLogged = bytes;
-        console.log(`  ${done}/${total} files, ${(bytes / 1048576).toFixed(1)}/${(totalBytes / 1048576).toFixed(1)} MB`);
+        say(`  ${done}/${total} files, ${(bytes / 1048576).toFixed(1)}/${(totalBytes / 1048576).toFixed(1)} MB`);
       },
     });
-    console.log(`Loaded in ${((performance.now() - started) / 1000).toFixed(1)}s`);
+    say(`Loaded in ${((performance.now() - started) / 1000).toFixed(1)}s`);
     for (const p of result.patched) {
-      console.warn(`  patched ${p.path}: ${p.notes.join('; ')}`);
+      say(`  patched ${p.path}: ${p.notes.join('; ')}`, 'warn');
     }
-    console.log(`  settled ${result.settled.steps} steps (${result.settled.seconds.toFixed(2)}s)${result.settled.atRest ? ' — at rest' : ' — still moving when the budget ran out'}`);
-    console.log('  model:', result.modelStats);
-    console.log('  actuators:', result.modelStats.actuatorNames.join(', '));
+    say(`  settled ${result.settled.steps} steps (${result.settled.seconds.toFixed(2)}s)${result.settled.atRest ? ' — at rest' : ' — still moving when the budget ran out'}`);
+    say(`  nq=${result.modelStats.nq} nv=${result.modelStats.nv} nu=${result.modelStats.nu}`);
+    say(`  actuators: ${result.modelStats.actuatorNames.join(', ')}`);
     return result;
   } catch (err) {
-    console.error(`Failed to load ${packId}:`, err.message);
+    say(`Failed to load ${packId}: ${err.message}`, 'error');
     if (err.code === 'MJCF_COMPILE_ERROR' && !err.mujocoDiagnostic) {
-      console.error('  (MuJoCo gave no diagnostic — see compileModel() in mujocoUtils.js for why)');
+      say('  (MuJoCo gave no diagnostic — see compileModel() in mujocoUtils.js for why)', 'error');
     }
     throw err;
   }
@@ -984,8 +1056,8 @@ window.robospaceLoadScene = async (xml, robotPack = null, sceneName = 'python_sc
     const after = open < 0 ? '' : body.slice(body.indexOf('>', open) + 1);
     const first = /<\s*([A-Za-z_][\w.-]*)/.exec(after);
     if (first && first[1] !== 'include') {
-      console.warn(`[robospace] <include> should be the first element inside <mujoco>, but found <${first[1]}>. `
-        + 'The robot\'s home pose may be applied to the wrong joints.');
+      say(`<include> should be the first element inside <mujoco>, but found <${first[1]}>. `
+        + "The robot's home pose may be applied to the wrong joints.", 'warn');
     }
   }
 
@@ -999,14 +1071,14 @@ window.robospaceLoadScene = async (xml, robotPack = null, sceneName = 'python_sc
       onProgress: ({ done, total, bytes, totalBytes }) => {
         if (bytes - lastLogged < totalBytes / 5 && done !== total) return;
         lastLogged = bytes;
-        console.log(`  ${done}/${total} files, ${(bytes / 1048576).toFixed(1)}/${(totalBytes / 1048576).toFixed(1)} MB`);
+        say(`  ${done}/${total} files, ${(bytes / 1048576).toFixed(1)}/${(totalBytes / 1048576).toFixed(1)} MB`);
       },
     });
-    console.log(`Scene "${sceneName}" loaded in ${((performance.now() - started) / 1000).toFixed(1)}s`);
-    for (const p of result.patched) console.warn(`  patched ${p.path}: ${p.notes.join('; ')}`);
+    say(`Scene "${sceneName}" loaded in ${((performance.now() - started) / 1000).toFixed(1)}s`);
+    for (const p of result.patched) say(`  patched ${p.path}: ${p.notes.join('; ')}`, 'warn');
     return result;
   } catch (err) {
-    console.error(`Failed to load scene "${sceneName}":`, err.message);
+    say(`Failed to load scene "${sceneName}": ${err.message}`, 'error');
     throw err;
   }
 };

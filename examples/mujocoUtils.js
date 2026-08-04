@@ -351,27 +351,61 @@ function formatCompileFailure(printed, thrown) {
     'that does not exist, or an element in the wrong place.';
 }
 
+/**
+ * Decodes `count` names out of `model.names` using an address table.
+ *
+ * `model.names` is one packed buffer of NUL-terminated strings and each `name_*adr`
+ * entry is a **byte offset** into it. The only correct way to read one is to slice
+ * from that offset and stop at the first NUL:
+ *
+ *     decoder.decode(model.names.subarray(addr)).split('\0')[0]
+ *
+ * Three call sites in pythonIntegration.js instead did
+ * `decode(model.names).split('\0')[addr]`, treating the byte offset as an index into
+ * the split array. That is almost always out of range, so the fallback fired every
+ * time and `get_sensor_names()` returned ["sensor_0", "sensor_1", ...] rather than the
+ * real names from the XML. `mujocoUtils.js`'s body-name assignment had the same bug.
+ *
+ * Do NOT reach for the WASM's `id2name` as an alternative: for any unnamed object
+ * `mj_id2name` returns NULL and the binding does `std::string(NULL)`, which reads from
+ * wasm address 0 — ur5e's unnamed visual geoms come back as the literal string
+ * "emsc". `name2id` is safe (it returns -1 on a miss); id→name must always go through
+ * an address table.
+ *
+ * @param {Model} model
+ * @param {Int32Array} adrArray e.g. model.name_jntadr
+ * @param {number} count e.g. model.njnt
+ * @param {string} fallbackPrefix used when an object has no name
+ * @returns {string[]}
+ */
+export function readNames(model, adrArray, count, fallbackPrefix) {
+  const decoder = new TextDecoder('utf-8');
+  const out = [];
+  if (!model || !adrArray || !(count > 0)) return out;
+  for (let i = 0; i < count; i++) {
+    const addr = adrArray[i];
+    let name = '';
+    if (Number.isInteger(addr) && addr >= 0 && addr < model.names.length) {
+      name = decoder.decode(model.names.subarray(addr)).split('\0')[0] || '';
+    }
+    out.push(name || `${fallbackPrefix}_${i}`);
+  }
+  return out;
+}
+
 /** Reads the names of a model's actuators and joints out of model.names.
  *
- * Same decoding approach as pythonIntegration.js:59-71 — names is one packed
- * buffer of NUL-terminated strings, indexed by the name_*adr tables.
+ * The return shape is asserted in three test suites and travels over postMessage in
+ * ParentBridge — keep it. New callers should use readNames() directly.
  *
  * @param {Model} model
  * @returns {{ actuatorNames: string[], jointNames: string[] }}
  */
 export function readModelNames(model) {
-  const decoder = new TextDecoder('utf-8');
-  const readAt = (addr) => decoder.decode(model.names.subarray(addr)).split('\0')[0] || '';
-
-  const actuatorNames = [];
-  for (let i = 0; i < model.nu; i++) {
-    actuatorNames.push(readAt(model.name_actuatoradr[i]) || `actuator_${i}`);
-  }
-  const jointNames = [];
-  for (let i = 0; i < model.njnt; i++) {
-    jointNames.push(readAt(model.name_jntadr[i]) || `joint_${i}`);
-  }
-  return { actuatorNames, jointNames };
+  return {
+    actuatorNames: readNames(model, model.name_actuatoradr, model.nu, 'actuator'),
+    jointNames: readNames(model, model.name_jntadr, model.njnt, 'joint'),
+  };
 }
 
 /** Loads a scene for MuJoCo
@@ -433,6 +467,11 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
     // mj_makeData's arena is what actually grows the heap, so sample after State
     // exists rather than after the compile.
     recordHeap(parent, parent.model);
+
+    // Every id, address and name from the previous model is now meaningless. The
+    // Python side caches the model index and keys it on this, so it must change before
+    // anything can read a stale entry.
+    parent.modelEpoch = (parent.modelEpoch || 0) + 1;
 
     let model = parent.model;
     let state = parent.state;
@@ -615,6 +654,10 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
           material.color.b != color[2] ||
           material.opacity != color[3] ||
           material.map     != texture) {
+        // `map` is spread in only when there is a texture. three.js warns
+        // "Material: 'map' parameter is undefined" for every explicitly-undefined
+        // parameter, and most geoms are untextured — that was ~36 console warnings per
+        // scene load, which buries the diagnostics people actually need to read.
         material = new THREE.MeshPhysicalMaterial({
           color: new THREE.Color(color[0], color[1], color[2]),
           transparent: color[3] < 1.0,
@@ -623,7 +666,7 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
           reflectivity     : model.geom_matid[g] != -1 ?       model.mat_reflectance[model.geom_matid[g]] : undefined,
           roughness        : model.geom_matid[g] != -1 ? 1.0 - model.mat_shininess  [model.geom_matid[g]] : undefined,
           metalness        : model.geom_matid[g] != -1 ? 0.1 : undefined,
-          map              : texture
+          ...(texture ? { map: texture } : {}),
         });
       }
 
