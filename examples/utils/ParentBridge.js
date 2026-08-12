@@ -44,9 +44,19 @@ const PARENT_ORIGIN_ALLOWLIST = [
 ];
 
 // Dev/preview origins, permitted only when this page is NOT the production deploy.
+//
+// The private-network entries are for running the app on `next dev`'s Network URL
+// rather than localhost — testing on a phone, or just using the LAN address the
+// dev server prints. They are deliberately pinned to the RFC1918 ranges
+// (10/8, 172.16/12, 192.168/16) and NOT written as a general
+// /^http:\/\/\d+\.\d+\.\d+\.\d+:\d+$/, which would trust any *public* IP — i.e.
+// any page a stranger can host. Same trust level as localhost, same dev-only gate.
 const DEV_ORIGIN_ALLOWLIST = [
   /^http:\/\/localhost:\d+$/,
   /^http:\/\/127\.0\.0\.1:\d+$/,
+  /^http:\/\/10(?:\.\d{1,3}){3}:\d+$/,
+  /^http:\/\/192\.168(?:\.\d{1,3}){2}:\d+$/,
+  /^http:\/\/172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}:\d+$/,
   /^https:\/\/[a-z0-9-]+\.vercel\.app$/,
 ];
 

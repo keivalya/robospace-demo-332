@@ -234,6 +234,41 @@ console.log('handshake');
 
 console.log('\nframing controls');
 {
+  // Private-network dev origins. The negative case below is the one that matters --
+  // a public IP must never be trusted -- so it sits next to a positive control on
+  // the same code path, or it would pass for any reason at all (see the note in
+  // CLAUDE.md about assertions that can only ever pass).
+  for (const origin of [
+    'http://10.0.0.237:3002',
+    'http://192.168.1.14:3000',
+    'http://172.16.5.9:3000',
+    'http://172.31.255.255:80',
+  ]) {
+    messageListeners.clear();
+    sent = [];
+    const bridge = new ParentBridge(createFakeDemo());
+    deliver('HELLO', { parentOrigin: origin }, { origin });
+    check(typed('READY').length === 1, `HELLO from LAN origin ${origin} gets READY`);
+    check(bridge.parentOrigin === origin, `${origin} is locked in`);
+  }
+
+  for (const origin of [
+    'http://93.184.216.34:3002',   // public
+    'http://172.15.0.1:3000',      // just below the 172.16/12 range
+    'http://172.32.0.1:3000',      // just above it
+    'http://11.0.0.1:3000',        // adjacent to 10/8
+    'http://192.169.1.1:3000',     // adjacent to 192.168/16
+    'https://10.0.0.237:3002',     // https is not a dev origin
+  ]) {
+    messageListeners.clear();
+    sent = [];
+    new ParentBridge(createFakeDemo());
+    deliver('HELLO', { parentOrigin: origin }, { origin });
+    check(typed('READY').length === 0, `HELLO from non-private origin ${origin} is refused`);
+  }
+}
+
+{
   // event.origin identifies an origin, not a window. Another frame or an opener on
   // an allowlisted origin must not be able to pose as our embedder.
   messageListeners.clear();
