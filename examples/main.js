@@ -689,6 +689,24 @@ export class RoboSpaceDemo {
         lastSeen = this._frameCount;
         return;
       }
+      /*
+       * An unrendered iframe gets no rAF callbacks at all, yet its document still
+       * reports visibilityState 'visible' — visibility tracks the top-level
+       * browsing context, not this frame's layout — so the guard above misses it.
+       *
+       * This is not hypothetical: the editor keeps the iframe display:none until
+       * the bridge handshake completes (ProjectEditorShell renders it with
+       * `display: phase === 'ready' ? 'block' : 'none'`). Without this check the
+       * watchdog fired every 2s during startup, and forever if the handshake
+       * failed — each time restarting a loop that cannot possibly produce a frame.
+       *
+       * Zero layout size is the reliable signal: a display:none iframe reports
+       * innerWidth/innerHeight of 0.
+       */
+      if (typeof window !== 'undefined' && (window.innerWidth === 0 || window.innerHeight === 0)) {
+        lastSeen = this._frameCount;
+        return;
+      }
       if (this._frameCount === lastSeen) {
         console.warn('[robospace] render loop stalled; restarting it');
         try {
