@@ -10,6 +10,10 @@ import { ParentBridge } from './utils/ParentBridge.js';
 import { mujocoLogHooks } from './utils/mujocoLog.js';
 import { resolveInitialScene, readStoredScene, forgetStoredScene, DEFAULT_SCENE } from './utils/initialScene.js';
 import { SimClock } from './utils/simClock.js';
+import {
+  emitAnalytics, attachAnalyticsSink, flushAnalytics, dropAnalyticsQueue,
+  browserLabel, classifyWasmError, wasmResourceTiming,
+} from './utils/analytics.js';
 
 // index.html loads this module as `main.js?v=N`. Propagate that N to every
 // dynamic import() below so bumping the single number in index.html invalidates
@@ -117,7 +121,63 @@ const loadPyodide = window.loadPyodide;
 // Load the MuJoCo Module. The log hooks capture stdout/stderr, which is where
 // the XML compiler's diagnostics land — see utils/mujocoLog.js.
 setStage('loading MuJoCo WebAssembly');
-const mujoco = await load_mujoco(mujocoLogHooks);
+
+/*
+ * ANALYTICS ONLY — this block changes no behaviour.
+ *
+ * `streaming_compiled` cannot be read from the outside: Emscripten's
+ * instantiateAsync picks streaming vs. buffered internally, in generated code
+ * that must not be hand-edited. A transparent wrapper around
+ * WebAssembly.instantiateStreaming is the only way to observe the choice. It
+ * delegates unchanged, records whether the promise resolved, and is restored in
+ * a finally — so if anything here throws, the loader is untouched.
+ */
+let streamingCompiled = null;
+const _origStreaming =
+  typeof WebAssembly !== 'undefined' && typeof WebAssembly.instantiateStreaming === 'function'
+    ? WebAssembly.instantiateStreaming
+    : null;
+if (_origStreaming) {
+  WebAssembly.instantiateStreaming = function (...args) {
+    streamingCompiled = 'attempted';
+    return _origStreaming.apply(this, args).then(
+      (r) => { streamingCompiled = true; return r; },
+      (e) => { streamingCompiled = false; throw e; },
+    );
+  };
+}
+
+const WASM_URL = (() => {
+  try { return new URL('../dist/mujoco_wasm.wasm', import.meta.url).href; }
+  catch (_) { return ''; }
+})();
+
+const _wasmT0 = performance.now();
+let mujoco;
+try {
+  mujoco = await load_mujoco(mujocoLogHooks);
+} catch (err) {
+  const { reason, stage, error_name } = classifyWasmError(err, 'compile');
+  emitAnalytics('wasm_load_failed', {
+    reason,
+    stage,
+    ms_elapsed: Math.round(performance.now() - _wasmT0),
+    browser: browserLabel(),
+    error_name,
+    // Relayed for Sentry on the parent side; GA4 only ever sees reason/stage.
+    _error_message: String((err && err.message) || err || '').slice(0, 500),
+    _error_stack: String((err && err.stack) || '').slice(0, 4000),
+  });
+  throw err;
+} finally {
+  if (_origStreaming) WebAssembly.instantiateStreaming = _origStreaming;
+}
+
+emitAnalytics('wasm_load_completed', {
+  load_ms: Math.round(performance.now() - _wasmT0),
+  streaming_compiled: streamingCompiled === true,
+  ...wasmResourceTiming(WASM_URL),
+});
 
 // Set up Emscripten's Virtual File System
 const STORAGE_KEY_SCENE = 'robospace_last_scene';
@@ -975,8 +1035,34 @@ setStage('constructing the simulator');
 let demo = new RoboSpaceDemo();
 window._roboDemo = demo;  // expose for IDE resize handle
 
+/*
+ * ANALYTICS ONLY. The queue built up during boot drains here, once the bridge
+ * exists and the parent has said HELLO. A direct visitor to
+ * demo.robospace.app has no parent, so the queue is dropped when the handshake
+ * times out — standalone traffic is deliberately unmeasured in v1.
+ */
+attachAnalyticsSink((name, params) => demo.parentBridge?.sendAnalytics(name, params) === true);
+demo.parentBridge?.onConnected(flushAnalytics);
+demo.parentBridge?.onStandalone(dropAnalyticsQueue);
+
 setStage('loading the initial scene');
-await demo.init();
+try {
+  await demo.init();
+} catch (err) {
+  // The module loaded but the engine never became usable — the `first_step`
+  // stage in the reporting enum.
+  const { reason, stage, error_name } = classifyWasmError(err, 'first_step');
+  emitAnalytics('wasm_load_failed', {
+    reason,
+    stage,
+    ms_elapsed: Math.round(performance.now() - _wasmT0),
+    browser: browserLabel(),
+    error_name,
+    _error_message: String((err && err.message) || err || '').slice(0, 500),
+    _error_stack: String((err && err.stack) || '').slice(0, 4000),
+  });
+  throw err;
+}
 
 setStage('ready');
 console.log('[robospace] ready');

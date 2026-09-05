@@ -16,7 +16,8 @@
     "test:mjmath": "node test/mjmath.test.mjs",
     "test:ik": "node --import ./test/register.mjs test/ik.test.mjs",
     "test:packs": "node --import ./test/register.mjs test/robot-packs.test.mjs",
-    "test:scene": "node --import ./test/register.mjs tools/check-scene.mjs test/fixtures/kitchen_stretch.xml"
+    "test:scene": "node --import ./test/register.mjs tools/check-scene.mjs test/fixtures/kitchen_stretch.xml",
+    "test:analytics": "node test/analytics.test.mjs"
   },
   "repository": {
     "type": "git",

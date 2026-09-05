@@ -152,12 +152,20 @@ export class ParentBridge {
       if (qp) this.projectId = qp;
     } catch (_) {}
 
+    // Fired once the handshake completes / times out. Analytics uses these to
+    // drain or drop its queue: events are emitted at module top level, long
+    // before this object exists, so something has to tell it when the wire is
+    // live. See utils/analytics.js.
+    this._onConnectedCbs = [];
+    this._onStandaloneCbs = [];
+
     this._onMessage = this._onMessage.bind(this);
     window.addEventListener('message', this._onMessage);
 
     this._helloTimer = setTimeout(() => {
       if (!this.parentOrigin) {
         this.standalone = true;
+        this._fire(this._onStandaloneCbs);
         if (window.parent === window) return;
       }
     }, HELLO_TIMEOUT_MS);
@@ -179,6 +187,36 @@ export class ParentBridge {
     } catch (e) {
       console.warn('[ParentBridge] postMessage failed:', e);
     }
+  }
+
+  /** @param {() => void} cb */
+  onConnected(cb) {
+    if (this.parentOrigin) { cb(); return; }
+    this._onConnectedCbs.push(cb);
+  }
+
+  /** @param {() => void} cb */
+  onStandalone(cb) {
+    if (this.standalone) { cb(); return; }
+    this._onStandaloneCbs.push(cb);
+  }
+
+  _fire(list) {
+    for (const cb of list.splice(0)) {
+      try { cb(); } catch (e) { console.warn('[ParentBridge] callback threw:', e); }
+    }
+  }
+
+  /**
+   * Relay one analytics event to the parent, which owns the GA4 tag.
+   *
+   * @returns {boolean} false when there is no parent yet, so the caller can keep
+   *          the event queued rather than losing it.
+   */
+  sendAnalytics(name, params) {
+    if (!this.parentOrigin) return false;
+    this._send('ANALYTICS_EVENT', { name, params: params || {} });
+    return true;
   }
 
   _onMessage(event) {
@@ -205,6 +243,7 @@ export class ParentBridge {
       this.parentOrigin = event.origin;
       clearTimeout(this._helloTimer);
       this.standalone = false;
+      this._fire(this._onConnectedCbs);
       this._send('READY', {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: ['snapshot', 'thumbnail', 'sim_state'],
