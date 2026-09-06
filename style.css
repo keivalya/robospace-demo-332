@@ -416,34 +416,71 @@ body {
 }
 
 .blocklySvg {
-    background-color: #18181c !important;
+    background-color: #141419 !important;
 }
 
+.blocklyMainBackground {
+    fill: #141419 !important;
+    stroke: none !important;
+}
+
+/* Left Toolbox Sidebar */
 .blocklyToolboxDiv {
-    background-color: #121216 !important;
-    border-right: 1px solid #26262d !important;
+    background-color: rgba(20, 20, 26, 0.95) !important;
+    border-right: 1px solid #262630 !important;
+    color: #f1f5f9 !important;
 }
 
-.blocklyFlyoutBackground {
-    fill: #1a1a20 !important;
+.blocklyToolboxContents {
+    background-color: transparent !important;
 }
 
-.blocklyTreeLabel {
-    color: #cbd5e1 !important;
-    font-family: system-ui, -apple-system, sans-serif !important;
-    font-size: 12px !important;
+.blocklyTreeRow,
+.blocklyToolboxCategory {
+    background-color: transparent !important;
+    color: #f1f5f9 !important;
+    border-radius: 6px !important;
+    margin: 2px 4px !important;
+    transition: background-color 0.15s ease !important;
 }
 
-.blocklyTreeRow:hover {
-    background-color: #262632 !important;
+.blocklyTreeRow:hover,
+.blocklyToolboxCategory:hover {
+    background-color: rgba(255, 255, 255, 0.08) !important;
 }
 
-.blocklyTreeSelected {
+.blocklyTreeSelected,
+.blocklyTreeRow.blocklyTreeSelected {
     background-color: #3b82f6 !important;
 }
 
-.blocklyTreeSelected .blocklyTreeLabel {
-    color: #ffffff !important;
+.blocklyTreeLabel,
+.blocklyTreeIcon,
+.blocklyToolboxCategory .blocklyTreeLabel,
+.blocklyTreeRowContentContainer span {
+    color: #f1f5f9 !important;
+    font-family: system-ui, -apple-system, sans-serif !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+}
+
+/* Flyout background and contents */
+.blocklyFlyout {
+    background-color: rgba(16, 16, 22, 0.95) !important;
+}
+
+.blocklyFlyoutBackground {
+    fill: rgba(16, 16, 22, 0.95) !important;
+    fill-opacity: 0.95 !important;
+    stroke: #262630 !important;
+}
+
+.blocklyFlyoutButton {
+    fill: #1e293b !important;
+}
+
+.blocklyFlyoutButtonText {
+    fill: #f8fafc !important;
 }
 
 #python-code {

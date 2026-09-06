@@ -245,7 +245,31 @@ export class BlockEditor {
             document.body.appendChild(div.firstElementChild);
         }
 
-        this.workspace = Blockly.inject(this.containerEl, {
+        let darkTheme = null;
+        if (Blockly.Theme && Blockly.Theme.defineTheme) {
+            try {
+                darkTheme = Blockly.Theme.defineTheme('robospace_dark', {
+                    componentStyles: {
+                        workspaceBackgroundColour: '#141419',
+                        toolboxBackgroundColour: '#16161d',
+                        toolboxForegroundColour: '#f1f5f9',
+                        flyoutBackgroundColour: '#121218',
+                        flyoutForegroundColour: '#f1f5f9',
+                        flyoutOpacity: 0.95,
+                        scrollbarColour: '#334155',
+                        scrollbarOpacity: 0.7,
+                        insertionMarkerColour: '#3b82f6',
+                        insertionMarkerOpacity: 0.3,
+                        markerColour: '#3b82f6',
+                        cursorColour: '#3b82f6'
+                    }
+                });
+            } catch (e) {
+                // theme fallback
+            }
+        }
+
+        const injectOptions = {
             toolbox: document.getElementById('toolbox'),
             collapse: false,
             comments: true,
@@ -273,7 +297,11 @@ export class BlockEditor {
                 minScale: 0.4,
                 scaleSpeed: 1.2
             }
-        });
+        };
+
+        if (darkTheme) injectOptions.theme = darkTheme;
+
+        this.workspace = Blockly.inject(this.containerEl, injectOptions);
 
         this.loadDefaultBlocks();
 
