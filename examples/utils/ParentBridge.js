@@ -261,7 +261,10 @@ export class ParentBridge {
       case 'NEW_PROJECT':
         this.projectId = data.payload?.projectId || null;
         this._handleNewProject(data.payload || {})
-          .then(() => this._send('LOAD_PROJECT_OK', { projectId: this.projectId }, data.id))
+          .then(() => {
+            this._send('LOAD_PROJECT_OK', { projectId: this.projectId }, data.id);
+            setTimeout(() => this.emitThumbnail(), 1200);
+          })
           .catch((err) => this._send(
             'ERROR',
             { code: 'NEW_PROJECT_FAILED', message: String(err?.message || err), recoverable: true },
@@ -271,7 +274,10 @@ export class ParentBridge {
       case 'LOAD_PROJECT':
         this.projectId = data.payload?.projectId || this.projectId;
         this._handleLoadProject(data.payload || {})
-          .then(() => this._send('LOAD_PROJECT_OK', { projectId: this.projectId }, data.id))
+          .then(() => {
+            this._send('LOAD_PROJECT_OK', { projectId: this.projectId }, data.id);
+            setTimeout(() => this.emitThumbnail(), 1200);
+          })
           .catch((err) => this._send(
             'ERROR',
             { code: 'LOAD_PROJECT_FAILED', message: String(err?.message || err), recoverable: true },
@@ -348,15 +354,45 @@ export class ParentBridge {
   }
 
   _captureThumbnail() {
-    const renderer = this.demo?.renderer;
-    if (!renderer || !renderer.domElement) return undefined;
+    const demo = this.demo;
+    const renderer = demo?.renderer;
+    const scene = demo?.scene;
+    const camera = demo?.camera;
+    if (!renderer || !renderer.domElement || !scene || !camera) return undefined;
     try {
+      // Force a synchronous render pass so the WebGL drawing buffer contains active 3D pixels
+      if (typeof demo.render === 'function') {
+        demo.render();
+      } else {
+        renderer.render(scene, camera);
+      }
+
       const off = document.createElement('canvas');
       off.width = THUMBNAIL_W;
       off.height = THUMBNAIL_H;
       const ctx = off.getContext('2d');
       ctx.drawImage(renderer.domElement, 0, 0, THUMBNAIL_W, THUMBNAIL_H);
-      return off.toDataURL('image/png', 0.7);
+
+      // Validate that captured image is not blank/transparent
+      const imgData = ctx.getImageData(0, 0, THUMBNAIL_W, THUMBNAIL_H);
+      const data = imgData.data;
+      let nonZeroAlpha = 0;
+      let nonBlackPixels = 0;
+      for (let i = 0; i < data.length; i += 64) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+        if (a > 20) nonZeroAlpha++;
+        if (r > 15 || g > 15 || b > 15) nonBlackPixels++;
+      }
+
+      if (nonZeroAlpha < 10 && nonBlackPixels < 10) {
+        console.warn('[ParentBridge] Captured thumbnail canvas is blank/transparent, skipping.');
+        return undefined;
+      }
+
+      return off.toDataURL('image/png', 0.85);
     } catch (e) {
       console.warn('[ParentBridge] thumbnail capture failed:', e);
       return undefined;
