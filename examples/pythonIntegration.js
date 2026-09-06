@@ -4,6 +4,7 @@ import { getPosition, getQuaternion, readModelNames, readNames } from './mujocoU
 import { matToQuat } from './utils/mjmath.js';
 import { solveIk } from './utils/ik.js';
 import { createCodeEditor } from './utils/CodeEditor.js';
+import { BlockEditor } from './utils/BlockEditor.js';
 
 export async function initializePythonEnvironment(demo) {
     if (!window.pyodide) return;
@@ -1808,15 +1809,15 @@ function _setRunning(isRunning) {
 }
 
 const STORAGE_KEY_SCRIPT = 'robospace_last_script';
-const DEFAULT_SCRIPT = `# Get system information
-n_actuators = get_num_actuators()
-print(f"Number of actuators: {n_actuators}")
+const DEFAULT_SCRIPT = `# UR5e Robot Control
+import time
 
-# Print actuator details
-names = get_actuator_names()
-ranges = get_actuator_ranges()
-for i in range(n_actuators):
-    print(f"  {i}: {names[i]} \\t [{ranges[i][0]:.2f}, {ranges[i][1]:.2f}]")
+robot = get_robot()
+print("Moving UR5e arm to target [0.4, 0.0, 0.25]...")
+robot.arm.move_to([0.4, 0.0, 0.25])
+robot.gripper.open()
+time.sleep(0.5)
+robot.gripper.close()
 `;
 
 export function setupPythonIDE(demo) {
@@ -1871,6 +1872,57 @@ export function setupPythonIDE(demo) {
     } else {
         codeArea.addEventListener('input', _onInput);
     }
+
+    // ── Blockly Dual-Mode Integration (Phase 3) ────────────────
+    const blocklyHost = document.getElementById('blockly-editor-container');
+    const modeBtnPython = document.getElementById('mode-btn-python');
+    const modeBtnBlocks = document.getElementById('mode-btn-blocks');
+    const modeBadge = document.getElementById('editor-mode-badge');
+
+    let _blockEditor = null;
+    if (blocklyHost) {
+        _blockEditor = new BlockEditor(blocklyHost, (generatedPython) => {
+            // Live sync generated Python from Blockly to CodeMirror
+            setCode(generatedPython);
+        });
+        window._blockEditor = _blockEditor;
+    }
+
+    const setEditorMode = (mode) => {
+        localStorage.setItem('robospace_editor_mode', mode);
+        [modeBtnPython, modeBtnBlocks].forEach((btn) => {
+            if (btn) {
+                btn.classList.remove('active');
+                btn.setAttribute('aria-selected', 'false');
+            }
+        });
+
+        if (mode === 'blocks') {
+            if (modeBtnBlocks) {
+                modeBtnBlocks.classList.add('active');
+                modeBtnBlocks.setAttribute('aria-selected', 'true');
+            }
+            if (blocklyHost) blocklyHost.style.display = 'block';
+            if (editorHost) editorHost.style.display = 'none';
+            if (modeBadge) modeBadge.textContent = 'Blocks Mode';
+            _blockEditor?.resize();
+        } else { // default 'python'
+            if (modeBtnPython) {
+                modeBtnPython.classList.add('active');
+                modeBtnPython.setAttribute('aria-selected', 'true');
+            }
+            if (blocklyHost) blocklyHost.style.display = 'none';
+            if (editorHost) editorHost.style.display = 'block';
+            if (modeBadge) modeBadge.textContent = 'Python API';
+            _editor?.focus();
+        }
+    };
+
+    if (modeBtnPython) modeBtnPython.addEventListener('click', () => setEditorMode('python'));
+    if (modeBtnBlocks) modeBtnBlocks.addEventListener('click', () => setEditorMode('blocks'));
+
+    const initialMode = localStorage.getItem('robospace_editor_mode') || 'python';
+    setEditorMode(initialMode);
 
     // Clear output
     if (clearButton) clearButton.addEventListener('click', () => {

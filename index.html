@@ -13,6 +13,8 @@
     <meta name="theme-color" content="#ffffff">
     <link rel="icon" type="image/png" href="./examples/favicon.png">
     <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
+    <script src="https://unpkg.com/blockly/blockly.min.js"></script>
+    <script src="https://unpkg.com/blockly/python_compressed.js"></script>
     <link rel="stylesheet" href="./style.css">
 </head>
 
@@ -155,7 +157,16 @@
 
         <!-- Program panel (right, ~40%) -->
         <div id="python-ide">
+            <div id="editor-mode-bar" class="editor-mode-bar">
+                <div class="mode-toggle-group" role="tablist" aria-label="Editor view mode">
+                    <button type="button" id="mode-btn-python" class="mode-btn active" role="tab" aria-selected="true" title="Python Code Editor">🐍 Python</button>
+                    <button type="button" id="mode-btn-blocks" class="mode-btn" role="tab" aria-selected="false" title="Blockly Visual Editor">🧱 Blocks</button>
+                </div>
+                <span id="editor-mode-badge" class="editor-mode-badge">Python API</span>
+            </div>
+
             <div id="python-editor-container">
+                <div id="blockly-editor-container" style="display:none"></div>
                 <div id="python-code-editor"></div>
                 <textarea id="python-code" style="display:none"></textarea>
             </div>
@@ -210,6 +221,7 @@
                 const ratio = Math.min(MAX_RATIO, Math.max(MIN_RATIO, (e.clientX - rect.left) / rect.width));
                 left.style.flexBasis = (ratio * 100) + '%';
                 if (window._roboDemo) window._roboDemo.onWindowResize();
+                if (window._blockEditor) window._blockEditor.resize();
             });
 
             handle.addEventListener('pointerup', (e) => {
@@ -220,6 +232,11 @@
                 const finalRatio = (left.getBoundingClientRect().width) / rect.width;
                 localStorage.setItem(STORAGE_KEY, finalRatio.toFixed(4));
                 handle.releasePointerCapture(e.pointerId);
+                if (window._blockEditor) window._blockEditor.resize();
+            });
+
+            window.addEventListener('resize', () => {
+                if (window._blockEditor) window._blockEditor.resize();
             });
         })();
     </script>
