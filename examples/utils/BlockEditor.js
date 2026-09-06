@@ -300,14 +300,10 @@ export class BlockEditor {
                 <field name="Y">0.0</field>
                 <field name="Z">0.25</field>
                 <next>
-                  <block type="robospace_gripper_open">
+                  <block type="robospace_sleep">
+                    <field name="SECONDS">1.0</field>
                     <next>
-                      <block type="robospace_sleep">
-                        <field name="SECONDS">0.5</field>
-                        <next>
-                          <block type="robospace_gripper_close"></block>
-                        </next>
-                      </block>
+                      <block type="robospace_arm_home"></block>
                     </next>
                   </block>
                 </next>

@@ -1377,13 +1377,22 @@ class ArmComponent:
 class GripperComponent:
     """High-level gripper or hand component."""
     def open(self, seconds=0.5):
-        return open_gripper(seconds=seconds)
+        try:
+            return open_gripper(seconds=seconds)
+        except Exception as e:
+            print(f"Gripper note: {e}")
 
     def close(self, seconds=0.8):
-        return close_gripper(seconds=seconds)
+        try:
+            return close_gripper(seconds=seconds)
+        except Exception as e:
+            print(f"Gripper note: {e}")
 
     def set(self, opening=1.0, seconds=0.8):
-        return set_gripper(opening, seconds=seconds)
+        try:
+            return set_gripper(opening, seconds=seconds)
+        except Exception as e:
+            print(f"Gripper note: {e}")
 
 class DriveBaseComponent:
     """High-level mobile drive base component."""
@@ -1809,15 +1818,15 @@ function _setRunning(isRunning) {
 }
 
 const STORAGE_KEY_SCRIPT = 'robospace_last_script';
-const DEFAULT_SCRIPT = `# UR5e Robot Control
+const DEFAULT_SCRIPT = `# UR5e Robot Arm Control
 import time
 
 robot = get_robot()
 print("Moving UR5e arm to target [0.4, 0.0, 0.25]...")
 robot.arm.move_to([0.4, 0.0, 0.25])
-robot.gripper.open()
-time.sleep(0.5)
-robot.gripper.close()
+time.sleep(1.0)
+print("Returning UR5e arm home...")
+robot.arm.home()
 `;
 
 export function setupPythonIDE(demo) {
