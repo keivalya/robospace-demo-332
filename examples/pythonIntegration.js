@@ -1206,8 +1206,11 @@ def run(seconds=1.0):
     """
     return window.robospaceRunMotion(json.dumps({'seconds': float(seconds)})).to_py()
 
-# Older name for the same thing; 'wait' reads better in a sequence of motions.
+# 'wait' and 'sleep' step simulation physics for 'seconds'
 wait = run
+sleep = run
+import time
+time.sleep = run
 
 def skip_playback():
     """Jump straight to the current state instead of watching the recorded motion."""
@@ -1440,6 +1443,12 @@ class Robot:
     @property
     def joints(self):
         return self._joints
+
+    def wait(self, seconds=1.0):
+        return run(seconds)
+
+    def sleep(self, seconds=1.0):
+        return run(seconds)
 
     def __repr__(self):
         return f"<Robot with {len(self._joints)} joints, arm={self.arm.target_frame}>"
@@ -1861,8 +1870,17 @@ export function setupPythonIDE(demo) {
         codeArea.value = initialScript;
     }
 
-    const getCode = () => _editor ? _editor.getValue() : codeArea.value;
+    let _currentMode = localStorage.getItem('robospace_editor_mode') || 'python';
+
+    const getCode = () => {
+        if (_currentMode === 'blocks') {
+            return _blockEditor ? _blockEditor.generatePython() : '';
+        }
+        return _editor ? _editor.getValue() : codeArea.value;
+    };
+
     const setCode = (text) => {
+        if (_currentMode === 'blocks') return;
         if (_editor) _editor.setValue(text);
         else codeArea.value = text;
         localStorage.setItem(STORAGE_KEY_SCRIPT, text);
@@ -1871,14 +1889,22 @@ export function setupPythonIDE(demo) {
     // Expose getter/setter/reset for top-level controls (Save, Import, Reset)
     window.getPythonScript = getCode;
     window.setPythonScript = setCode;
-    window.resetPythonScript = () => setCode(DEFAULT_SCRIPT);
+    window.resetPythonScript = () => {
+        if (_currentMode === 'blocks') {
+            _blockEditor?.loadDefaultBlocks();
+        } else {
+            setCode(DEFAULT_SCRIPT);
+        }
+    };
 
     // Persist script on every keystroke (debounced 500 ms)
     let _saveTimer = null;
     const _onInput = () => {
         clearTimeout(_saveTimer);
         _saveTimer = setTimeout(() => {
-            localStorage.setItem(STORAGE_KEY_SCRIPT, getCode());
+            if (_currentMode === 'python') {
+                localStorage.setItem(STORAGE_KEY_SCRIPT, getCode());
+            }
             window._roboDemo?.parentBridge?.emitDirty('script');
         }, 500);
     };
@@ -1899,14 +1925,12 @@ export function setupPythonIDE(demo) {
 
     let _blockEditor = null;
     if (blocklyHost) {
-        _blockEditor = new BlockEditor(blocklyHost, (generatedPython) => {
-            // Live sync generated Python from Blockly to CodeMirror
-            setCode(generatedPython);
-        });
+        _blockEditor = new BlockEditor(blocklyHost, null);
         window._blockEditor = _blockEditor;
     }
 
     const setEditorMode = (mode) => {
+        _currentMode = mode;
         localStorage.setItem('robospace_editor_mode', mode);
         [modeBtnPython, modeBtnBlocks].forEach((btn) => {
             if (btn) {
