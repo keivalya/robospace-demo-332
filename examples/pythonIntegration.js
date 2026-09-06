@@ -1368,6 +1368,16 @@ class ArmComponent:
         target_quat = quat if quat is not None else tool_down()
         return move_to(self.target_frame, pos=pos, quat=target_quat, seconds=seconds)
 
+    def home(self, seconds=1.0):
+        """Return all arm joints to zero / home position."""
+        info = _index()
+        home_map = {}
+        for a in info['actuators']:
+            if a['joint']:
+                home_map[a['joint']] = 0.0
+        if home_map:
+            return move_joints(home_map, seconds=seconds)
+
     @property
     def pos(self):
         tf = self.target_frame
