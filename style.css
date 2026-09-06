@@ -489,6 +489,43 @@ body {
     fill: #f8fafc !important;
 }
 
+/* Right-Hand Side Controls (Trashcan & Zoom) */
+.blocklyTrash {
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+.blocklyTrash:hover {
+    opacity: 1;
+}
+
+.blocklyTrash image {
+    width: 28px !important;
+    height: 28px !important;
+    transform: translate(9.5px, 9.5px);
+}
+
+.blocklyZoom {
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+}
+
+.blocklyZoom:hover {
+    opacity: 1;
+}
+
+.blocklyZoom image {
+    width: 28px !important;
+    height: 28px !important;
+    cursor: pointer;
+    transition: opacity 0.15s ease, filter 0.15s ease;
+}
+
+.blocklyZoom image:hover {
+    opacity: 1;
+    filter: brightness(1.25);
+}
+
 #python-code {
     flex: 1;
     background-color: #15151a;
