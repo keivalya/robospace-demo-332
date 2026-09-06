@@ -1896,7 +1896,6 @@ export function setupPythonIDE(demo) {
     const blocklyHost = document.getElementById('blockly-editor-container');
     const modeBtnPython = document.getElementById('mode-btn-python');
     const modeBtnBlocks = document.getElementById('mode-btn-blocks');
-    const modeBadge = document.getElementById('editor-mode-badge');
 
     let _blockEditor = null;
     if (blocklyHost) {
@@ -1923,7 +1922,6 @@ export function setupPythonIDE(demo) {
             }
             if (blocklyHost) blocklyHost.style.display = 'block';
             if (editorHost) editorHost.style.display = 'none';
-            if (modeBadge) modeBadge.textContent = 'Blocks Mode';
             _blockEditor?.resize();
         } else { // default 'python'
             if (modeBtnPython) {
@@ -1932,7 +1930,6 @@ export function setupPythonIDE(demo) {
             }
             if (blocklyHost) blocklyHost.style.display = 'none';
             if (editorHost) editorHost.style.display = 'block';
-            if (modeBadge) modeBadge.textContent = 'Python API';
             _editor?.focus();
         }
     };
