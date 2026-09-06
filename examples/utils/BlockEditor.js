@@ -350,7 +350,7 @@ export class BlockEditor {
     generatePython() {
         if (!this.workspace || !Blockly.Python) return '# Blockly not available';
         const bodyCode = Blockly.Python.workspaceToCode(this.workspace);
-        return `# Generated from Blockly Visual Blocks\nimport time\n\nrobot = get_robot()\nprint("Moving UR5e arm to target [0.4, 0.0, 0.25]...")\n${bodyCode}`;
+        return `import time\n\nrobot = get_robot()\nprint("Moving UR5e arm to target [0.4, 0.0, 0.25]...")\n${bodyCode}`;
     }
 
     resize() {
