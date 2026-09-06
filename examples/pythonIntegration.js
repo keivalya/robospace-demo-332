@@ -1305,6 +1305,129 @@ def close_gripper(seconds=0.8):
     """Close the gripper fully."""
     return set_gripper(0.0, seconds)
 
+class JointRef:
+    """Convenience wrapper for a named robot joint."""
+    def __init__(self, name):
+        self.name = name
+
+    @property
+    def angle(self):
+        return get_joint(self.name)
+
+    @property
+    def angle_deg(self):
+        import math
+        val = get_joint(self.name)
+        return math.degrees(val) if val is not None else 0.0
+
+    @property
+    def limits(self):
+        return joint_limits(self.name)
+
+    @property
+    def limits_deg(self):
+        import math
+        lim = joint_limits(self.name)
+        return [math.degrees(l) for l in lim] if lim else None
+
+    def set_angle(self, value, seconds=0.5):
+        import math
+        if isinstance(value, (int, float)):
+            rad = math.radians(value) if abs(value) > 6.283185307179586 else float(value)
+        else:
+            rad = float(value)
+        move_joints({self.name: rad}, seconds=seconds)
+
+    def __repr__(self):
+        return f"<Joint '{self.name}': {self.angle:.4f} rad>"
+
+class ArmComponent:
+    """High-level arm component for task-space motion and IK."""
+    def __init__(self, target_frame=None):
+        self._target_frame = target_frame
+
+    @property
+    def target_frame(self):
+        if self._target_frame:
+            return self._target_frame
+        sn = site_names()
+        if 'attachment_site' in sn:
+            return 'site:attachment_site'
+        if sn:
+            return f'site:{sn[0]}'
+        bn = body_names()
+        if 'hand' in bn:
+            return 'body:hand'
+        if 'link7' in bn:
+            return 'body:link7'
+        return f'body:{bn[-1]}' if bn else 'body:world'
+
+    def move_to(self, pos, quat=None, seconds=1.0):
+        """Move the end-effector to (pos, quat) using IK."""
+        target_quat = quat if quat is not None else tool_down()
+        return move_to(self.target_frame, pos=pos, quat=target_quat, seconds=seconds)
+
+    @property
+    def pos(self):
+        tf = self.target_frame
+        kind, name = tf.split(':', 1) if ':' in tf else ('body', tf)
+        return frame(kind, name)['pos']
+
+class GripperComponent:
+    """High-level gripper or hand component."""
+    def open(self, seconds=0.5):
+        return open_gripper(seconds=seconds)
+
+    def close(self, seconds=0.8):
+        return close_gripper(seconds=seconds)
+
+    def set(self, opening=1.0, seconds=0.8):
+        return set_gripper(opening, seconds=seconds)
+
+class DriveBaseComponent:
+    """High-level mobile drive base component."""
+    def __init__(self):
+        acts = actuator_names()
+        self.left = 'left_wheel_vel' if 'left_wheel_vel' in acts else None
+        self.right = 'right_wheel_vel' if 'right_wheel_vel' in acts else None
+
+    def drive(self, forward=0.0, turn=0.0, seconds=1.0):
+        if not self.left or not self.right:
+            print("Drive base velocity actuators not detected for this robot.")
+            return
+        set_actuator(self.left, forward + turn)
+        set_actuator(self.right, forward - turn)
+        run(seconds)
+
+    def stop(self):
+        if self.left and self.right:
+            set_actuator(self.left, 0.0)
+            set_actuator(self.right, 0.0)
+
+class Robot:
+    """High-level, component-based Robot API for easy education and control."""
+    def __init__(self):
+        self.arm = ArmComponent()
+        self.gripper = GripperComponent()
+        self.base = DriveBaseComponent()
+        self._joints = {j: JointRef(j) for j in joint_names()}
+
+    def get_joint(self, name):
+        if name in self._joints:
+            return self._joints[name]
+        return JointRef(name)
+
+    @property
+    def joints(self):
+        return self._joints
+
+    def __repr__(self):
+        return f"<Robot with {len(self._joints)} joints, arm={self.arm.target_frame}>"
+
+def get_robot():
+    """Get the high-level Robot instance for the active model."""
+    return Robot()
+
 def help_api():
     """List every helper, generated from what is actually defined.
 
@@ -1313,6 +1436,8 @@ def help_api():
     panel by the first Run and never came back.
     """
     groups = [
+        ('robot (high-level API)', ['get_robot', 'Robot', 'ArmComponent', 'GripperComponent',
+                                   'DriveBaseComponent', 'JointRef']),
         ('model', ['print_model', 'model_info', 'actuator_names', 'joint_names',
                    'body_names', 'site_names', 'geom_names']),
         ('lookups', ['joint_info', 'joint_limits', 'joint_qpos_index', 'actuator_info',
@@ -2158,6 +2283,31 @@ async def policy(t):
 
 await control_loop(policy, duration=10)
 print("done, final qpos:", get_qpos()[:4].round(3))`,
+
+    robot_sdk: `# High-level Robot API (Tier 1 & Tier 2)
+#
+# No index math or raw float arrays required.
+# Move arms, drive wheels, and read joint limits by name.
+
+robot = get_robot()
+print("Loaded robot:", robot)
+
+# Inspect joints and limits in degrees
+for name, joint in robot.joints.items():
+    print(f"  {name:20s}: {joint.angle_deg:6.1f}°  limits: {joint.limits_deg}")
+
+# Move end-effector (arm) using IK in task space
+print("\\nMoving arm to target position...")
+robot.arm.move_to(pos=[0.4, 0.0, 0.25], seconds=1.0)
+print("Current arm position:", robot.arm.pos.round(3))
+
+# Operate gripper
+robot.gripper.open()
+run(0.5)
+robot.gripper.close()
+run(0.5)
+
+print("\\nHigh-level control completed cleanly.")`,
 };
 
 // Menu labels, beside the examples on purpose: an example missing from this map is
@@ -2167,6 +2317,7 @@ export const EXAMPLE_LABELS = {
     // Roughly a learning path: what is loaded -> make it move -> where things are ->
     // load a real robot -> build a scene -> manipulate -> advanced.
     info:            'What is loaded',
+    robot_sdk:       'High-level Robot API',
     basic_control:   'Make it move',
     task_space:      'Where things are',
     sweep_joint:     'Sweep a joint',
