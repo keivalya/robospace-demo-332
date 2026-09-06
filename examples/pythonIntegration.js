@@ -1209,8 +1209,11 @@ def run(seconds=1.0):
 # 'wait' and 'sleep' step simulation physics for 'seconds'
 wait = run
 sleep = run
+
 import time
+import sys
 time.sleep = run
+sys.modules['time'].sleep = run
 
 def skip_playback():
     """Jump straight to the current state instead of watching the recorded motion."""
@@ -1843,7 +1846,7 @@ import time
 robot = get_robot()
 print("Moving UR5e arm to target [0.4, 0.0, 0.25]...")
 robot.arm.move_to([0.4, 0.0, 0.25])
-time.sleep(1.0)
+wait(1.5)
 print("Returning UR5e arm home...")
 robot.arm.home()
 `;

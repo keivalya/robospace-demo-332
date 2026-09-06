@@ -189,7 +189,7 @@ export class BlockEditor {
 
         pyGen['robospace_sleep'] = function (block) {
             const sec = block.getFieldValue('SECONDS');
-            return `time.sleep(${sec})\n`;
+            return `wait(${sec})\n`;
         };
 
         pyGen['robospace_print'] = function (block) {
