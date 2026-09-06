@@ -4,6 +4,7 @@ import { getPosition, getQuaternion, readModelNames, readNames } from './mujocoU
 import { matToQuat } from './utils/mjmath.js';
 import { solveIk } from './utils/ik.js';
 import { createCodeEditor } from './utils/CodeEditor.js';
+import { BlockEditor } from './utils/BlockEditor.js';
 
 export async function initializePythonEnvironment(demo) {
     if (!window.pyodide) return;
@@ -1866,6 +1867,74 @@ export function setupPythonIDE(demo) {
     } else {
         codeArea.addEventListener('input', _onInput);
     }
+
+    // ── Blockly Dual-Mode Integration (Phase 3) ────────────────
+    const blocklyHost = document.getElementById('blockly-editor-container');
+    const editorContainer = document.getElementById('python-editor-container');
+    const modeBtnPython = document.getElementById('mode-btn-python');
+    const modeBtnBlocks = document.getElementById('mode-btn-blocks');
+    const modeBtnSplit = document.getElementById('mode-btn-split');
+    const modeBadge = document.getElementById('editor-mode-badge');
+
+    let _blockEditor = null;
+    if (blocklyHost) {
+        _blockEditor = new BlockEditor(blocklyHost, (generatedPython) => {
+            // Live sync generated Python from Blockly to CodeMirror
+            setCode(generatedPython);
+        });
+    }
+
+    const setEditorMode = (mode) => {
+        localStorage.setItem('robospace_editor_mode', mode);
+        [modeBtnPython, modeBtnBlocks, modeBtnSplit].forEach((btn) => {
+            if (btn) {
+                btn.classList.remove('active');
+                btn.setAttribute('aria-selected', 'false');
+            }
+        });
+
+        if (editorContainer) {
+            editorContainer.classList.remove('mode-split');
+        }
+
+        if (mode === 'blocks') {
+            if (modeBtnBlocks) {
+                modeBtnBlocks.classList.add('active');
+                modeBtnBlocks.setAttribute('aria-selected', 'true');
+            }
+            if (blocklyHost) blocklyHost.style.display = 'block';
+            if (editorHost) editorHost.style.display = 'none';
+            if (modeBadge) modeBadge.textContent = 'Blocks Mode';
+            _blockEditor?.resize();
+        } else if (mode === 'split') {
+            if (modeBtnSplit) {
+                modeBtnSplit.classList.add('active');
+                modeBtnSplit.setAttribute('aria-selected', 'true');
+            }
+            if (blocklyHost) blocklyHost.style.display = 'block';
+            if (editorHost) editorHost.style.display = 'block';
+            if (editorContainer) editorContainer.classList.add('mode-split');
+            if (modeBadge) modeBadge.textContent = 'Split View';
+            _blockEditor?.resize();
+            _editor?.focus();
+        } else { // default 'python'
+            if (modeBtnPython) {
+                modeBtnPython.classList.add('active');
+                modeBtnPython.setAttribute('aria-selected', 'true');
+            }
+            if (blocklyHost) blocklyHost.style.display = 'none';
+            if (editorHost) editorHost.style.display = 'block';
+            if (modeBadge) modeBadge.textContent = 'Python API';
+            _editor?.focus();
+        }
+    };
+
+    if (modeBtnPython) modeBtnPython.addEventListener('click', () => setEditorMode('python'));
+    if (modeBtnBlocks) modeBtnBlocks.addEventListener('click', () => setEditorMode('blocks'));
+    if (modeBtnSplit) modeBtnSplit.addEventListener('click', () => setEditorMode('split'));
+
+    const initialMode = localStorage.getItem('robospace_editor_mode') || 'python';
+    setEditorMode(initialMode);
 
     // Clear output
     if (clearButton) clearButton.addEventListener('click', () => {

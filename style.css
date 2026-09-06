@@ -352,6 +352,62 @@ body {
     margin: 4px 0;
 }
 
+/* Mode Bar */
+.editor-mode-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 12px;
+    background: #111116;
+    border-bottom: 1px solid #26262d;
+    flex-shrink: 0;
+}
+
+.mode-toggle-group {
+    display: flex;
+    background: #1c1c24;
+    border: 1px solid #2a2a35;
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+}
+
+.mode-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.mode-btn:hover {
+    color: #f1f5f9;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.mode-btn.active {
+    background: #3b82f6;
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.editor-mode-badge {
+    font-size: 11px;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    background: #181820;
+    border-radius: 12px;
+    border: 1px solid #262630;
+}
+
 /* Editor area */
 #python-editor-container {
     flex: 1 1 0;
@@ -359,6 +415,59 @@ body {
     display: flex;
     position: relative;
     overflow: hidden;
+}
+
+#blockly-editor-container {
+    flex: 1;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    background: #18181c;
+}
+
+#python-editor-container.mode-split {
+    flex-direction: column;
+}
+
+#python-editor-container.mode-split #blockly-editor-container {
+    flex: 1 1 55%;
+    border-bottom: 1px solid #26262d;
+}
+
+#python-editor-container.mode-split #python-code-editor {
+    flex: 1 1 45%;
+}
+
+.blocklySvg {
+    background-color: #18181c !important;
+}
+
+.blocklyToolboxDiv {
+    background-color: #121216 !important;
+    border-right: 1px solid #26262d !important;
+}
+
+.blocklyFlyoutBackground {
+    fill: #1a1a20 !important;
+}
+
+.blocklyTreeLabel {
+    color: #cbd5e1 !important;
+    font-family: system-ui, -apple-system, sans-serif !important;
+    font-size: 12px !important;
+}
+
+.blocklyTreeRow:hover {
+    background-color: #262632 !important;
+}
+
+.blocklyTreeSelected {
+    background-color: #3b82f6 !important;
+}
+
+.blocklyTreeSelected .blocklyTreeLabel {
+    color: #ffffff !important;
 }
 
 #python-code {
