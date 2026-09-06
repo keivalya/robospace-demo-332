@@ -313,6 +313,7 @@ export class RoboSpaceDemo {
     // robotPacks for APPLY_SCENE, and a lazy import without the ?v=N serves stale.
     this.parentBridge = new ParentBridge(this, { versioned });
     window._roboDemo = this;
+    window.getSelectedBodyName = () => this.dragStateManager?.getSelectedBodyName() || null;
   }
 
   setupStatusIndicator() {

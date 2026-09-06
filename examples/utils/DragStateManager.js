@@ -147,6 +147,39 @@ export class DragStateManager {
                     this.previouslySelected = null;
                 }
             }
+            this.notifySelectionChange();
+        }
+    }
+
+    getSelectedBodyName() {
+        if (!this.previouslySelected || !window._roboDemo?.model) return null;
+        const bodyID = this.previouslySelected.bodyID;
+        if (typeof bodyID !== 'number' || bodyID < 0) return null;
+        const model = window._roboDemo.model;
+        const decoder = new TextDecoder('utf-8');
+        if (model.name_bodyadr && bodyID < model.nbody) {
+            const addr = model.name_bodyadr[bodyID];
+            if (Number.isInteger(addr) && addr >= 0 && addr < model.names.length) {
+                return decoder.decode(model.names.subarray(addr)).split('\0')[0] || `body_${bodyID}`;
+            }
+        }
+        return `body_${bodyID}`;
+    }
+
+    notifySelectionChange() {
+        const bodyName = this.getSelectedBodyName();
+        if (bodyName) {
+            if (typeof window.pythonOutput === 'function') {
+                window.pythonOutput(`\n📍 3D Inspection: Selected body '${bodyName}'`);
+                window.pythonOutput(`   Python snippet: body_pos('${bodyName}')`);
+            }
+            if (window._roboDemo?.parentBridge?.postMessage) {
+                window._roboDemo.parentBridge.postMessage({
+                    type: 'INSPECT_BODY',
+                    bodyName,
+                    bodyID: this.previouslySelected?.bodyID
+                });
+            }
         }
     }
 }

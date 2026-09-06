@@ -1428,6 +1428,22 @@ def get_robot():
     """Get the high-level Robot instance for the active model."""
     return Robot()
 
+def get_selected_body():
+    """Get name of the 3D body currently selected in the canvas."""
+    val = window.getSelectedBodyName()
+    return str(val) if val else None
+
+def print_selection():
+    """Print details of the currently selected 3D body."""
+    body = get_selected_body()
+    if not body:
+        print("No 3D body currently selected. Double-click any object in the 3D scene to select it.")
+        return
+    pos = body_pos(body)
+    print(f"Selected 3D Body: {body!r}")
+    print(f"  Position: {pos.round(4)}")
+    print(f"  Snippet:  body_pos({body!r})")
+
 def help_api():
     """List every helper, generated from what is actually defined.
 
@@ -1437,7 +1453,7 @@ def help_api():
     """
     groups = [
         ('robot (high-level API)', ['get_robot', 'Robot', 'ArmComponent', 'GripperComponent',
-                                   'DriveBaseComponent', 'JointRef']),
+                                   'DriveBaseComponent', 'JointRef', 'get_selected_body', 'print_selection']),
         ('model', ['print_model', 'model_info', 'actuator_names', 'joint_names',
                    'body_names', 'site_names', 'geom_names']),
         ('lookups', ['joint_info', 'joint_limits', 'joint_qpos_index', 'actuator_info',
