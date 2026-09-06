@@ -13,8 +13,6 @@
     <meta name="theme-color" content="#ffffff">
     <link rel="icon" type="image/png" href="./examples/favicon.png">
     <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
-    <script src="https://unpkg.com/blockly/blockly.min.js"></script>
-    <script src="https://unpkg.com/blockly/python_compressed.js"></script>
     <link rel="stylesheet" href="./style.css">
 </head>
 
@@ -157,17 +155,7 @@
 
         <!-- Program panel (right, ~40%) -->
         <div id="python-ide">
-            <div id="editor-mode-bar" class="editor-mode-bar">
-                <div class="mode-toggle-group" role="tablist" aria-label="Editor view mode">
-                    <button type="button" id="mode-btn-python" class="mode-btn active" role="tab" aria-selected="true" title="Python Code Editor">🐍 Python</button>
-                    <button type="button" id="mode-btn-blocks" class="mode-btn" role="tab" aria-selected="false" title="Blockly Visual Editor">🧱 Blocks</button>
-                    <button type="button" id="mode-btn-split" class="mode-btn" role="tab" aria-selected="false" title="Split Blocks & Python View">◫ Split</button>
-                </div>
-                <span id="editor-mode-badge" class="editor-mode-badge">Python API</span>
-            </div>
-
             <div id="python-editor-container">
-                <div id="blockly-editor-container" style="display:none"></div>
                 <div id="python-code-editor"></div>
                 <textarea id="python-code" style="display:none"></textarea>
             </div>
