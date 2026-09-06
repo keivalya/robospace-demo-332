@@ -1706,12 +1706,17 @@ let _interruptBuffer = null;
 
 function _setupInterruptBuffer() {
     try {
-        _interruptBuffer = new Uint8Array(new SharedArrayBuffer(1));
-        window.pyodide.setInterruptBuffer(_interruptBuffer);
+        if (typeof SharedArrayBuffer !== 'undefined') {
+            _interruptBuffer = new Uint8Array(new SharedArrayBuffer(1));
+            window.pyodide.setInterruptBuffer(_interruptBuffer);
+        } else {
+            console.warn('SharedArrayBuffer not available; Stop button will use soft interrupt.');
+            _interruptBuffer = null;
+        }
     } catch (e) {
         // SharedArrayBuffer unavailable (missing COOP/COEP headers) — stop button
         // will fall back to a best-effort approach without hard interrupts
-        console.warn('SharedArrayBuffer not available; Stop button will use soft interrupt.', e);
+        console.warn('SharedArrayBuffer not available; Stop button will use soft interrupt.');
         _interruptBuffer = null;
     }
 }
