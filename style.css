@@ -892,6 +892,39 @@ kbd {
     padding: 16px 18px;
 }
 
+/* Drag and Drop Zone for Upload Modal */
+.upload-dropzone {
+    border: 2px dashed #2e2e38;
+    background: #14141a;
+    border-radius: 10px;
+    padding: 24px 16px;
+    text-align: center;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.upload-dropzone:hover,
+.upload-dropzone.dragover {
+    border-color: #3b82f6;
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.dropzone-icon {
+    font-size: 32px;
+    margin-bottom: 8px;
+}
+
+.dropzone-text {
+    font-size: 14px;
+    color: #f1f5f9;
+}
+
+.dropzone-sub {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 4px;
+}
+
 .upload-modal-step {
     margin-bottom: 18px;
 }
