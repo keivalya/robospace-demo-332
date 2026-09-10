@@ -1840,8 +1840,7 @@ function _setRunning(isRunning) {
 }
 
 const STORAGE_KEY_SCRIPT = 'robospace_last_script';
-const DEFAULT_SCRIPT = `# UR5e Robot Arm Control
-import time
+const DEFAULT_SCRIPT = `import time
 
 robot = get_robot()
 print("Moving UR5e arm to target [0.4, 0.0, 0.25]...")
@@ -2013,7 +2012,7 @@ export function setupPythonIDE(demo) {
             reportPythonError(error);
         } finally {
             // Flush a trailing partial line, e.g. print("x", end="") before a throw.
-            try { window.pyodide.runPython('import sys; sys.stdout.flush(); sys.stderr.flush()'); } catch (_) {}
+            try { window.pyodide.runPython('import sys; sys.stdout.flush(); sys.stderr.flush()'); } catch (_) { }
             _setRunning(false);
             window._pythonShouldStop = false;
             if (window.setSimStatus) window.setSimStatus('ready');
@@ -2432,18 +2431,18 @@ print("\\nHigh-level control completed cleanly.")`,
 export const EXAMPLE_LABELS = {
     // Roughly a learning path: what is loaded -> make it move -> where things are ->
     // load a real robot -> build a scene -> manipulate -> advanced.
-    info:            'What is loaded',
-    robot_sdk:       'High-level Robot API',
-    basic_control:   'Make it move',
-    task_space:      'Where things are',
-    sweep_joint:     'Sweep a joint',
-    load_a_robot:    'Load a real robot',
-    build_scene:     'Build the Panda + block scene',
-    pick_block:      '└ Pick up a block',
-    pick_and_place:  '└ Pick and place',
-    stack_blocks:    'Stack two blocks',
-    drive_stretch:   'Drive a mobile robot',
-    pd_control:      'PD controller',
-    sine_wave:       'Sine wave',
-    live_control:    'Live control loop (advanced)',
+    info: 'What is loaded',
+    robot_sdk: 'High-level Robot API',
+    basic_control: 'Make it move',
+    task_space: 'Where things are',
+    sweep_joint: 'Sweep a joint',
+    load_a_robot: 'Load a real robot',
+    build_scene: 'Build the Panda + block scene',
+    pick_block: '└ Pick up a block',
+    pick_and_place: '└ Pick and place',
+    stack_blocks: 'Stack two blocks',
+    drive_stretch: 'Drive a mobile robot',
+    pd_control: 'PD controller',
+    sine_wave: 'Sine wave',
+    live_control: 'Live control loop (advanced)',
 };
