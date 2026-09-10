@@ -344,36 +344,80 @@ export class RoboSpaceDemo {
     }
   }
 
-  setupToolbar() {
+  async setupToolbar() {
     // Scene selector
     const sceneSelector = document.getElementById('scene-selector');
-    const scenes = {
-      "Universal Robots UR5e": "universal_robots_ur5e/scene.xml",
-    };
+    const scenes = [
+      { name: 'Universal Robots UR5e', value: 'universal_robots_ur5e/scene.xml' },
+    ];
 
-    // Populate scene selector (guard against double-init)
-    if (sceneSelector.options.length === 0) {
-      Object.entries(scenes).forEach(([name, file]) => {
-        const option = document.createElement('option');
-        option.value = file;
-        option.textContent = name;
-        if (file === this.params.scene) option.selected = true;
-        sceneSelector.appendChild(option);
-      });
-    } else {
-      sceneSelector.value = this.params.scene;
+    try {
+      const res = await fetch('/menagerie/manifest.json');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.models)) {
+          data.models.forEach((m) => {
+            if (m.xml_path && m.xml_path !== 'universal_robots_ur5e/scene.xml') {
+              scenes.push({
+                name: `${m.name} (${m.maker})`,
+                value: m.xml_path,
+              });
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[setupToolbar] Could not fetch menagerie manifest:', e);
     }
 
-    sceneSelector.addEventListener('change', async (e) => {
-      this.params.scene = e.target.value;
-      // Guarded for the same reason the read is: localStorage throws outright when
-      // storage is partitioned, which is how this page runs inside the dashboard.
-      try { localStorage.setItem(STORAGE_KEY_SCENE, this.params.scene); } catch (_) { /* not worth failing a load over */ }
-      try {
-        await this.reloadScene();
-        this.parentBridge?.emitDirty('scene');
-      } catch (err) { /* status handled in reloadScene */ }
-    });
+    if (sceneSelector) {
+      sceneSelector.innerHTML = '';
+      scenes.forEach(({ name, value }) => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = name;
+        if (value === this.params.scene) option.selected = true;
+        sceneSelector.appendChild(option);
+      });
+
+      // Ensure current scene option exists even if not in list
+      if (!sceneSelector.querySelector(`option[value="${CSS.escape(this.params.scene)}"]`)) {
+        const option = document.createElement('option');
+        option.value = this.params.scene;
+        option.textContent = this.params.scene;
+        option.selected = true;
+        sceneSelector.appendChild(option);
+      } else {
+        sceneSelector.value = this.params.scene;
+      }
+
+      sceneSelector.addEventListener('change', async (e) => {
+        const selectedXmlPath = e.target.value;
+        this.params.scene = selectedXmlPath;
+        try { localStorage.setItem(STORAGE_KEY_SCENE, this.params.scene); } catch (_) {}
+
+        try {
+          const FS = this.mujoco.FS;
+          const fullPath = `/working/${selectedXmlPath.replace(/^\/+/, '')}`;
+          const exists = FS.analyzePath(fullPath).exists;
+
+          if (!exists && this.parentBridge) {
+            const makerDir = selectedXmlPath.split('/')[0];
+            const selectedText = e.target.options[e.target.selectedIndex]?.textContent || makerDir;
+            await this.parentBridge._handleLoadMenagerieRobot({
+              xml_path: selectedXmlPath,
+              dir: makerDir,
+              name: selectedText,
+            });
+          } else {
+            await this.reloadScene(selectedXmlPath);
+          }
+          this.parentBridge?.emitDirty('scene');
+        } catch (err) {
+          console.error('[scene-selector] failed to load scene:', err);
+        }
+      });
+    }
 
     // Live plot toggle (floating overlay button)
     const plotBtn = document.getElementById('plot-toggle-button');
