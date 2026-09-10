@@ -420,31 +420,26 @@ export class ParentBridge {
     const files = [];
     let robotPack = null;
 
-    // Only walk custom_scenes/* — built-in scenes are re-downloaded on each
-    // boot, so we don't need to ship them in every snapshot.
-    if (entryXmlPath && entryXmlPath.startsWith('custom_scenes/')) {
-      const sceneDir = entryXmlPath.split('/').slice(0, 2).join('/');   // custom_scenes/<name>
-      const sceneRoot = `/working/${sceneDir}`;
+    if (entryXmlPath) {
+      if (entryXmlPath.startsWith('custom_scenes/')) {
+        const sceneDir = entryXmlPath.split('/').slice(0, 2).join('/');
+        const sceneRoot = `/working/${sceneDir}`;
+        const packPaths = this._packPathsFor(sceneDir);
+        if (packPaths.size) robotPack = this._packReference();
 
-      // Schema v2: a robot is stored as a reference and re-fetched from the
-      // pinned commit on load, never inlined. Base64ing Stretch 3 into every
-      // autosave is 73 MB through postMessage and into Firebase Storage — the
-      // whole reason the registry is CDN-backed.
-      //
-      // Scoped to the *current* scene dir: if the user has since switched to a
-      // built-in scene, _packPathsFor returns empty and no reference is written.
-      const packPaths = this._packPathsFor(sceneDir);
-      if (packPaths.size) robotPack = this._packReference();
-
-      this._walkFS(sceneRoot, (full) => {
-        const rel = full.replace(/^\/working\//, '');
-        if (packPaths.has(rel.slice(sceneDir.length + 1))) return;
-        const isText = isTextFile(full);
-        const content = isText
-          ? demo.mujoco.FS.readFile(full, { encoding: 'utf8' })
-          : uint8ToBase64(demo.mujoco.FS.readFile(full));
-        files.push({ path: rel, encoding: isText ? 'utf8' : 'base64', content });
-      });
+        this._walkFS(sceneRoot, (full) => {
+          const rel = full.replace(/^\/working\//, '');
+          if (packPaths.has(rel.slice(sceneDir.length + 1))) return;
+          const isText = isTextFile(full);
+          const content = isText
+            ? demo.mujoco.FS.readFile(full, { encoding: 'utf8' })
+            : uint8ToBase64(demo.mujoco.FS.readFile(full));
+          files.push({ path: rel, encoding: isText ? 'utf8' : 'base64', content });
+        });
+      } else if (entryXmlPath.includes('/') && entryXmlPath !== 'universal_robots_ur5e/scene.xml') {
+        const packId = entryXmlPath.split('/')[0];
+        robotPack = this.robotPack || { id: packId, commit: 'main' };
+      }
     }
 
     const script = (typeof window.getPythonScript === 'function') ? window.getPythonScript() : '';
@@ -454,9 +449,6 @@ export class ParentBridge {
     const sceneName = entryXmlPath ? entryXmlPath.split('/').slice(-2, -1)[0] || entryXmlPath.split('/')[0] : 'scene';
 
     return {
-      // v2 adds `robotPack`. The version is informational — what actually
-      // changes behaviour on load is whether `robotPack` is present, so a v2
-      // snapshot without one loads down exactly the v1 path.
       schemaVersion: 2,
       sceneName,
       entryXmlPath,
@@ -490,73 +482,67 @@ export class ParentBridge {
     const demo = this.demo;
     if (!snap || !snap.entryXmlPath) throw new Error('snapshot missing entryXmlPath');
 
-    // Validate before anything is deleted. This path used to be derived with
-    // split('/').slice(0, 2) behind nothing but a startsWith('custom_scenes/')
-    // check, so `custom_scenes/../evil.xml` yielded the directory
-    // `custom_scenes/..` — and the recursive delete below then pointed at the parent
-    // of every saved scene. It is the one MEMFS write path that bypassed all of
-    // sceneWriter's guards.
-    const sceneDir = snapshotSceneDir(snap.entryXmlPath);
+    let sceneDir = snapshotSceneDir(snap.entryXmlPath);
+    const packId = snap.robotPack?.id || (
+      snap.entryXmlPath &&
+      snap.entryXmlPath.includes('/') &&
+      !snap.entryXmlPath.startsWith('custom_scenes/') &&
+      snap.entryXmlPath !== 'universal_robots_ur5e/scene.xml'
+        ? snap.entryXmlPath.split('/')[0]
+        : null
+    );
+
+    if (!sceneDir && packId) {
+      sceneDir = packId;
+    }
 
     if (sceneDir) {
       this._rmrf(`/working/${sceneDir}`);
       this._ensureDir(`/working/${sceneDir}`);
     }
 
-    // Schema v2: the robot is a reference, so re-materialise it from the pinned
-    // commit before overlaying files[] — pack first, so a generated file wins any
-    // name collision. IndexedDB makes this local after the first fetch.
-    //
-    // A v1 snapshot has no robotPack and skips all of this, which is what keeps
-    // projects saved before the agent existed loading unchanged.
-    // Tell the parent we are alive before the slow part. LOAD_PROJECT's timeout is
-    // idle-based and re-armed by SCENE_PROGRESS, but a fully cached pack emits no
-    // progress at all — so without this beat there is nothing to re-arm it with and a
-    // compile-plus-settle had to finish inside the original budget.
     this._send('SCENE_PROGRESS', { projectId: this.projectId, phase: 'load', done: 0, total: 1 });
 
     let homePose = null;
-    if (snap.robotPack?.id && sceneDir) {
+    if (packId && sceneDir) {
       const { robotPacks } = await this._agentModules();
-      if (snap.robotPack.commit && snap.robotPack.commit !== robotPacks.MENAGERIE_COMMIT) {
-        // Not fatal, but worth saying out loud: the registry is pinned in code,
-        // and there are no manifests for historical commits to fetch instead.
-        console.warn(
-          `[ParentBridge] snapshot pins ${snap.robotPack.id} at menagerie `
-          + `${snap.robotPack.commit.slice(0, 8)}, loading ${robotPacks.MENAGERIE_COMMIT.slice(0, 8)}`,
-        );
-      }
-      let lastProgressAt = 0;
-      const pack = await robotPacks.ensureRobotPack(demo.mujoco, snap.robotPack.id, sceneDir, {
-        onProgress: (p) => {
-          const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-          if (p.done !== p.total && now - lastProgressAt < PROGRESS_THROTTLE_MS) return;
-          lastProgressAt = now;
+      if (Object.prototype.hasOwnProperty.call(robotPacks.ROBOT_MANIFESTS, packId)) {
+        let lastProgressAt = 0;
+        const pack = await robotPacks.ensureRobotPack(demo.mujoco, packId, sceneDir, {
+          onProgress: (p) => {
+            const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+            if (p.done !== p.total && now - lastProgressAt < PROGRESS_THROTTLE_MS) return;
+            lastProgressAt = now;
+            this._send('SCENE_PROGRESS', { projectId: this.projectId, phase: 'assets', ...p });
+          },
+        });
+        homePose = pack.homePose;
+        this.robotPack = {
+          id: packId,
+          commit: robotPacks.MENAGERIE_COMMIT,
+          sceneDir,
+          paths: pack.paths,
+        };
+      } else {
+        const result = await this._fetchAndWriteMenagerieRobot(sceneDir, snap.entryXmlPath, (p) => {
           this._send('SCENE_PROGRESS', { projectId: this.projectId, phase: 'assets', ...p });
-        },
-      });
-      homePose = pack.homePose;
-      this.robotPack = {
-        id: snap.robotPack.id,
-        commit: robotPacks.MENAGERIE_COMMIT,
-        sceneDir,
-        paths: pack.paths,
-      };
+        });
+        homePose = result.homePose;
+        this.robotPack = null;
+      }
     } else {
       this.robotPack = null;
     }
 
     if (Array.isArray(snap.files)) {
       for (const f of snap.files) {
-        // Was `f.path.replace(/^\/+/, '')`, which strips only *leading* slashes and
-        // lets every ".." segment through, so a snapshot could write anywhere in
-        // MEMFS. Confine to this snapshot's own scene directory instead. A built-in
-        // scene (sceneDir === null) ships no files, so there is nothing to relax for.
         if (!sceneDir) {
           throw new Error(`Snapshot carries files but its entryXmlPath "${snap.entryXmlPath}" `
             + 'is not a custom scene, so there is nowhere safe to put them.');
         }
-        const rel = resolveEntryXmlPath(f.path, sceneDir);   // returns sceneDir/<safe rel>
+        const rel = (sceneDir && sceneDir.startsWith('custom_scenes/'))
+          ? resolveEntryXmlPath(f.path, sceneDir)
+          : `${sceneDir}/${f.path.split('/').pop()}`;
         const full = `/working/${rel}`;
         this._ensureParentDirs(full);
         const data = f.encoding === 'base64' ? base64ToUint8(f.content) : f.content;
@@ -564,18 +550,14 @@ export class ParentBridge {
       }
     }
 
-    // params.scene decides what gets compiled, and READ_SCENE reads it straight back
-    // out to the parent, so it gets the same treatment rather than being trusted.
-    const entryXmlPath = sceneDir
+    const entryXmlPath = (sceneDir && sceneDir.startsWith('custom_scenes/'))
       ? resolveEntryXmlPath(snap.entryXmlPath, sceneDir)
       : snap.entryXmlPath;
 
-    // Ensure the scene selector exposes this scene.
-    this._ensureSceneOption(snap.sceneName, entryXmlPath);
+    this._ensureSceneOption(snap.sceneName || packId, entryXmlPath);
     const sceneSelector = document.getElementById('scene-selector');
     if (sceneSelector) sceneSelector.value = entryXmlPath;
 
-    // Suppress the hardcoded camera reset for this one reload.
     this.suppressCameraReset = true;
     try {
       await demo.reloadScene(entryXmlPath);
