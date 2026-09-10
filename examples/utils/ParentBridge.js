@@ -936,13 +936,14 @@ export class ParentBridge {
     let homePose = null;
 
     const fetchBytes = async (relPath) => {
+      const githubUrl = `https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/main/${makerDir}/${relPath}`;
+      const cdnUrl = `https://cdn.jsdelivr.net/gh/google-deepmind/mujoco_menagerie@main/${makerDir}/${relPath}`;
       const localUrl = `/menagerie/${makerDir}/${relPath}`;
       const parentUrl = this.parentOrigin ? `${this.parentOrigin}/menagerie/${makerDir}/${relPath}` : null;
-      const githubUrl = `https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/main/${makerDir}/${relPath}`;
 
-      const attempts = [localUrl];
+      const attempts = [githubUrl, cdnUrl];
       if (parentUrl) attempts.push(parentUrl);
-      attempts.push(githubUrl);
+      attempts.push(localUrl);
 
       for (const url of attempts) {
         try {
