@@ -534,15 +534,9 @@ export class ParentBridge {
       this.robotPack = null;
     }
 
-    if (Array.isArray(snap.files)) {
+    if (Array.isArray(snap.files) && sceneDir && sceneDir.startsWith('custom_scenes/')) {
       for (const f of snap.files) {
-        if (!sceneDir) {
-          throw new Error(`Snapshot carries files but its entryXmlPath "${snap.entryXmlPath}" `
-            + 'is not a custom scene, so there is nowhere safe to put them.');
-        }
-        const rel = (sceneDir && sceneDir.startsWith('custom_scenes/'))
-          ? resolveEntryXmlPath(f.path, sceneDir)
-          : `${sceneDir}/${f.path.split('/').pop()}`;
+        const rel = resolveEntryXmlPath(f.path, sceneDir);
         const full = `/working/${rel}`;
         this._ensureParentDirs(full);
         const data = f.encoding === 'base64' ? base64ToUint8(f.content) : f.content;
