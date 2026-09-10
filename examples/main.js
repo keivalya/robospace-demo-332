@@ -349,32 +349,53 @@ export class RoboSpaceDemo {
   async setupToolbar() {
     // Scene selector
     const sceneSelector = document.getElementById('scene-selector');
-    const scenes = [
-      { name: 'Universal Robots UR5e', value: 'universal_robots_ur5e/scene.xml' },
-    ];
-
-    if (Array.isArray(MENAGERIE_MODELS)) {
-      MENAGERIE_MODELS.forEach((m) => {
-        if (m.xml_path && m.xml_path !== 'universal_robots_ur5e/scene.xml') {
-          scenes.push({
-            name: `${m.name} (${m.maker})`,
-            value: m.xml_path,
-          });
-        }
-      });
-    }
-
     if (sceneSelector) {
       sceneSelector.innerHTML = '';
-      scenes.forEach(({ name, value }) => {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = name;
-        if (value === this.params.scene) option.selected = true;
-        sceneSelector.appendChild(option);
+
+      // Default scene optgroup
+      const defaultGroup = document.createElement('optgroup');
+      defaultGroup.label = 'Default Scene';
+      const ur5eOption = document.createElement('option');
+      ur5eOption.value = 'universal_robots_ur5e/scene.xml';
+      ur5eOption.textContent = 'Universal Robots UR5e';
+      if (ur5eOption.value === this.params.scene) ur5eOption.selected = true;
+      defaultGroup.appendChild(ur5eOption);
+      sceneSelector.appendChild(defaultGroup);
+
+      // Group Menagerie models by category
+      const categoriesMap = new Map();
+      if (Array.isArray(MENAGERIE_MODELS)) {
+        MENAGERIE_MODELS.forEach((m) => {
+          if (!m.xml_path || m.xml_path === 'universal_robots_ur5e/scene.xml') return;
+          const cat = m.category_label || 'Other';
+          if (!categoriesMap.has(cat)) categoriesMap.set(cat, []);
+          categoriesMap.get(cat).push(m);
+        });
+      }
+
+      const categoryOrder = ['Arm', 'Quadruped', 'Humanoid', 'Gripper', 'Mobile Manipulator', 'Drone', 'Other'];
+      const sortedCategories = Array.from(categoriesMap.keys()).sort((a, b) => {
+        let ia = categoryOrder.indexOf(a);
+        let ib = categoryOrder.indexOf(b);
+        if (ia === -1) ia = 999;
+        if (ib === -1) ib = 999;
+        return ia - ib;
       });
 
-      // Ensure current scene option exists even if not in list
+      sortedCategories.forEach((catName) => {
+        const optGroup = document.createElement('optgroup');
+        optGroup.label = `${catName}s (${categoriesMap.get(catName).length})`;
+        categoriesMap.get(catName).forEach((m) => {
+          const option = document.createElement('option');
+          option.value = m.xml_path;
+          option.textContent = `${m.name} — ${m.maker}`;
+          if (m.xml_path === this.params.scene) option.selected = true;
+          optGroup.appendChild(option);
+        });
+        sceneSelector.appendChild(optGroup);
+      });
+
+      // Ensure current scene option exists if custom
       if (!sceneSelector.querySelector(`option[value="${CSS.escape(this.params.scene)}"]`)) {
         const option = document.createElement('option');
         option.value = this.params.scene;

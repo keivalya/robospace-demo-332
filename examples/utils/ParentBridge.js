@@ -935,7 +935,15 @@ export class ParentBridge {
     const assetFiles = new Set();
     let homePose = null;
 
+    const cache = robotPacks.createIdbCache();
+
     const fetchBytes = async (relPath) => {
+      const cacheKey = `menagerie/${makerDir}/${relPath}`;
+      try {
+        const cached = await cache.get(cacheKey);
+        if (cached) return cached;
+      } catch (_) {}
+
       const githubUrl = `https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/main/${makerDir}/${relPath}`;
       const cdnUrl = `https://cdn.jsdelivr.net/gh/google-deepmind/mujoco_menagerie@main/${makerDir}/${relPath}`;
       const localUrl = `/menagerie/${makerDir}/${relPath}`;
@@ -948,7 +956,11 @@ export class ParentBridge {
       for (const url of attempts) {
         try {
           const res = await fetch(url);
-          if (res.ok) return new Uint8Array(await res.arrayBuffer());
+          if (res.ok) {
+            const bytes = new Uint8Array(await res.arrayBuffer());
+            try { await cache.set(cacheKey, bytes); } catch (_) {}
+            return bytes;
+          }
         } catch (_) {}
       }
       throw new Error(`Could not fetch asset ${makerDir}/${relPath}`);
@@ -1017,18 +1029,26 @@ export class ParentBridge {
     let doneCount = visitedXmls.size;
     const totalCount = visitedXmls.size + assetFiles.size;
 
-    for (const assetFile of assetFiles) {
-      try {
-        const data = await fetchBytes(assetFile);
-        fetchedFiles.set(assetFile, data);
-      } catch (e) {
-        console.warn(`[ParentBridge] could not fetch asset ${makerDir}/${assetFile}:`, e);
+    // Bounded parallelism (8 workers) for ultra-fast asset downloading
+    const CONCURRENCY = 8;
+    const queue = Array.from(assetFiles);
+    const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+      for (;;) {
+        const assetFile = queue.shift();
+        if (!assetFile) return;
+        try {
+          const data = await fetchBytes(assetFile);
+          fetchedFiles.set(assetFile, data);
+        } catch (e) {
+          console.warn(`[ParentBridge] could not fetch asset ${makerDir}/${assetFile}:`, e);
+        }
+        doneCount++;
+        if (onProgress) {
+          onProgress({ done: doneCount, total: totalCount, path: assetFile });
+        }
       }
-      doneCount++;
-      if (onProgress) {
-        onProgress({ done: doneCount, total: totalCount, path: assetFile });
-      }
-    }
+    });
+    await Promise.all(workers);
 
     const rootDir = `/working/${makerDir}`;
     this._rmrf(rootDir);
