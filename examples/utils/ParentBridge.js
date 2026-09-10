@@ -331,6 +331,19 @@ export class ParentBridge {
             recoverable: true,
           }, data.id));
         break;
+      case 'LOAD_MENAGERIE_ROBOT':
+        this._handleLoadMenagerieRobot(data.payload || {}, data.id)
+          .then((result) => {
+            this._send('MENAGERIE_ROBOT_OK', result, data.id);
+            this.emitDirty('menagerie_robot_loaded');
+            setTimeout(() => this.emitThumbnail(), 1200);
+          })
+          .catch((err) => this._send('ERROR', {
+            code: 'LOAD_MENAGERIE_ROBOT_FAILED',
+            message: String(err?.message || err),
+            recoverable: true,
+          }, data.id));
+        break;
       default:
         // Unknown but well-formed message — ignore.
         break;
@@ -837,6 +850,192 @@ export class ParentBridge {
       robotPack: this._packReference(),
     };
   }
+
+  /**
+   * LOAD_MENAGERIE_ROBOT — dynamic on-demand loading of any MuJoCo Menagerie robot model.
+   */
+  async _handleLoadMenagerieRobot(payload, requestId) {
+    const model = payload.robot || payload;
+    const robotId = model.robotId || model.id;
+    const name = model.name;
+    const xml_path = model.xml_path;
+    const makerDir = model.dir || model.maker_folder || (xml_path ? xml_path.split('/')[0] : null);
+
+    if (!xml_path || !makerDir) {
+      throw new Error('LOAD_MENAGERIE_ROBOT requires xml_path and dir in payload.');
+    }
+
+    const { sceneWriter, robotPacks } = await this._agentModules();
+    const demo = this.demo;
+
+    this._send('SCENE_PROGRESS', { projectId: this.projectId, requestId, phase: 'load', done: 0, total: 1 });
+
+    let entryXmlPath = xml_path;
+    let homePose = null;
+
+    const packId = robotId || makerDir;
+    if (Object.prototype.hasOwnProperty.call(robotPacks.ROBOT_MANIFESTS, packId)) {
+      const pack = await robotPacks.ensureRobotPack(demo.mujoco, packId, makerDir, {
+        onProgress: (p) => {
+          this._send('SCENE_PROGRESS', { projectId: this.projectId, requestId, phase: 'assets', ...p });
+        },
+      });
+      homePose = pack.homePose;
+      entryXmlPath = `${makerDir}/${pack.entry}`;
+      this.robotPack = {
+        id: packId,
+        commit: robotPacks.MENAGERIE_COMMIT,
+        sceneDir: makerDir,
+        paths: pack.paths,
+      };
+    } else {
+      const result = await this._fetchAndWriteMenagerieRobot(makerDir, xml_path, (p) => {
+        this._send('SCENE_PROGRESS', { projectId: this.projectId, requestId, phase: 'assets', ...p });
+      });
+      homePose = result.homePose;
+      entryXmlPath = xml_path;
+      this.robotPack = null;
+    }
+
+    this._ensureSceneOption(name || makerDir, entryXmlPath);
+    const sceneSelector = document.getElementById('scene-selector');
+    if (sceneSelector) sceneSelector.value = entryXmlPath;
+
+    this.suppressCameraReset = false;
+    await demo.reloadScene(entryXmlPath);
+
+    if (homePose) {
+      sceneWriter.applyHomePose(demo, homePose);
+    }
+
+    if (typeof window.resetPythonScript === 'function') {
+      window.resetPythonScript();
+    }
+
+    return {
+      projectId: this.projectId,
+      entryXmlPath,
+      name: name || makerDir,
+      modelStats: await this._currentModelStats(),
+    };
+  }
+
+  async _fetchAndWriteMenagerieRobot(makerDir, xmlRelPath, onProgress) {
+    const { robotPacks } = await this._agentModules();
+    const demo = this.demo;
+    const FS = demo.mujoco.FS;
+
+    const entryFileName = xmlRelPath.includes('/')
+      ? xmlRelPath.split('/').slice(1).join('/')
+      : xmlRelPath;
+
+    const fetchedFiles = new Map();
+    const pendingXmls = [entryFileName];
+    const visitedXmls = new Set();
+    const assetFiles = new Set();
+    let homePose = null;
+
+    const fetchBytes = async (relPath) => {
+      const localUrl = `/menagerie/${makerDir}/${relPath}`;
+      const githubUrl = `https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/main/${makerDir}/${relPath}`;
+      try {
+        const res = await fetch(localUrl);
+        if (res.ok) return new Uint8Array(await res.arrayBuffer());
+      } catch (_) {}
+      const resGh = await fetch(githubUrl);
+      if (!resGh.ok) throw new Error(`HTTP ${resGh.status} fetching ${makerDir}/${relPath}`);
+      return new Uint8Array(await resGh.arrayBuffer());
+    };
+
+    while (pendingXmls.length > 0) {
+      const xmlFile = pendingXmls.shift();
+      if (visitedXmls.has(xmlFile)) continue;
+      visitedXmls.add(xmlFile);
+
+      const bytes = await fetchBytes(xmlFile);
+      const rawText = new TextDecoder('utf-8').decode(bytes);
+
+      const patchedTex = robotPacks.stripFileTextures(rawText);
+      const patchedKf = robotPacks.extractAndStripKeyframes(patchedTex.xml);
+      if (patchedKf.homePose && !homePose) {
+        homePose = patchedKf.homePose;
+      }
+
+      fetchedFiles.set(xmlFile, new TextEncoder().encode(patchedKf.xml));
+
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(rawText, 'text/xml');
+
+      const includes = doc.querySelectorAll('include');
+      for (const inc of includes) {
+        const fileAttr = inc.getAttribute('file');
+        if (fileAttr && !visitedXmls.has(fileAttr)) {
+          pendingXmls.push(fileAttr);
+        }
+      }
+
+      let meshDir = '';
+      const compiler = doc.querySelector('compiler');
+      if (compiler) {
+        meshDir = compiler.getAttribute('meshdir') || compiler.getAttribute('assetdir') || '';
+      }
+
+      const resolveAssetPath = (fileAttr) => {
+        if (!fileAttr) return null;
+        if (meshDir && !fileAttr.startsWith(meshDir)) {
+          return `${meshDir}/${fileAttr}`.replace(/\/+/g, '/');
+        }
+        return fileAttr;
+      };
+
+      const meshes = doc.querySelectorAll('mesh');
+      for (const m of meshes) {
+        const f = resolveAssetPath(m.getAttribute('file'));
+        if (f) assetFiles.add(f);
+      }
+
+      const skins = doc.querySelectorAll('skin');
+      for (const s of skins) {
+        const f = resolveAssetPath(s.getAttribute('file'));
+        if (f) assetFiles.add(f);
+      }
+
+      const hfields = doc.querySelectorAll('hfield');
+      for (const h of hfields) {
+        const f = resolveAssetPath(h.getAttribute('file'));
+        if (f) assetFiles.add(f);
+      }
+    }
+
+    let doneCount = visitedXmls.size;
+    const totalCount = visitedXmls.size + assetFiles.size;
+
+    for (const assetFile of assetFiles) {
+      try {
+        const data = await fetchBytes(assetFile);
+        fetchedFiles.set(assetFile, data);
+      } catch (e) {
+        console.warn(`[ParentBridge] could not fetch asset ${makerDir}/${assetFile}:`, e);
+      }
+      doneCount++;
+      if (onProgress) {
+        onProgress({ done: doneCount, total: totalCount, path: assetFile });
+      }
+    }
+
+    const rootDir = `/working/${makerDir}`;
+    this._rmrf(rootDir);
+    this._ensureDir(rootDir);
+
+    for (const [relPath, fileData] of fetchedFiles.entries()) {
+      const fullPath = `${rootDir}/${relPath}`;
+      this._ensureParentDirs(fullPath);
+      FS.writeFile(fullPath, fileData);
+    }
+
+    return { homePose };
+  }
+
 
   /** The snapshot-sized view of the active pack: an id and a commit, never bytes. */
   _packReference() {
