@@ -89,6 +89,16 @@ function showBootError(what, detail) {
  * when the agent repairs a scene.
  */
 function reportUncaught(what, detail) {
+  const detailStr = String((detail && (detail.message || detail.stack || detail.type)) || detail || '');
+  if (
+    detailStr.includes('PythonError') ||
+    detailStr.includes('SystemExit:') ||
+    detailStr.includes('Traceback (most recent call last)')
+  ) {
+    console.warn('[robospace] Python runtime error (handled in Python output panel):', detail);
+    return;
+  }
+
   if (bootDone) {
     console.error(`[robospace] ${what}:`, detail);
     const demo = window._roboDemo;
@@ -341,8 +351,9 @@ export class RoboSpaceDemo {
   _markReady(which) {
     if (which === 'scene') this._sceneReady = true;
     if (which === 'python') this._pythonReady = true;
-    if (this._sceneReady && this._pythonReady && this.setSimStatus) {
-      this.setSimStatus('ready');
+    if (this._sceneReady && this._pythonReady) {
+      bootDone = true;
+      if (this.setSimStatus) this.setSimStatus('ready');
     }
   }
 
@@ -1140,6 +1151,7 @@ try {
   throw err;
 }
 
+bootDone = true;
 setStage('ready');
 console.log('[robospace] ready');
 
