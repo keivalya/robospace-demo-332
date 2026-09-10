@@ -937,14 +937,20 @@ export class ParentBridge {
 
     const fetchBytes = async (relPath) => {
       const localUrl = `/menagerie/${makerDir}/${relPath}`;
+      const parentUrl = this.parentOrigin ? `${this.parentOrigin}/menagerie/${makerDir}/${relPath}` : null;
       const githubUrl = `https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/main/${makerDir}/${relPath}`;
-      try {
-        const res = await fetch(localUrl);
-        if (res.ok) return new Uint8Array(await res.arrayBuffer());
-      } catch (_) {}
-      const resGh = await fetch(githubUrl);
-      if (!resGh.ok) throw new Error(`HTTP ${resGh.status} fetching ${makerDir}/${relPath}`);
-      return new Uint8Array(await resGh.arrayBuffer());
+
+      const attempts = [localUrl];
+      if (parentUrl) attempts.push(parentUrl);
+      attempts.push(githubUrl);
+
+      for (const url of attempts) {
+        try {
+          const res = await fetch(url);
+          if (res.ok) return new Uint8Array(await res.arrayBuffer());
+        } catch (_) {}
+      }
+      throw new Error(`Could not fetch asset ${makerDir}/${relPath}`);
     };
 
     while (pendingXmls.length > 0) {

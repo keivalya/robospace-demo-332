@@ -15,6 +15,8 @@ import {
   browserLabel, classifyWasmError, wasmResourceTiming,
 } from './utils/analytics.js';
 
+import { MENAGERIE_MODELS } from './utils/menagerieManifest.js';
+
 // index.html loads this module as `main.js?v=N`. Propagate that N to every
 // dynamic import() below so bumping the single number in index.html invalidates
 // the whole lazily-loaded graph, instead of leaving pythonIntegration.js,
@@ -351,23 +353,15 @@ export class RoboSpaceDemo {
       { name: 'Universal Robots UR5e', value: 'universal_robots_ur5e/scene.xml' },
     ];
 
-    try {
-      const res = await fetch('/menagerie/manifest.json');
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data.models)) {
-          data.models.forEach((m) => {
-            if (m.xml_path && m.xml_path !== 'universal_robots_ur5e/scene.xml') {
-              scenes.push({
-                name: `${m.name} (${m.maker})`,
-                value: m.xml_path,
-              });
-            }
+    if (Array.isArray(MENAGERIE_MODELS)) {
+      MENAGERIE_MODELS.forEach((m) => {
+        if (m.xml_path && m.xml_path !== 'universal_robots_ur5e/scene.xml') {
+          scenes.push({
+            name: `${m.name} (${m.maker})`,
+            value: m.xml_path,
           });
         }
-      }
-    } catch (e) {
-      console.warn('[setupToolbar] Could not fetch menagerie manifest:', e);
+      });
     }
 
     if (sceneSelector) {
