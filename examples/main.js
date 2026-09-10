@@ -416,20 +416,36 @@ export class RoboSpaceDemo {
           const fullPath = `/working/${selectedXmlPath.replace(/^\/+/, '')}`;
           const exists = FS.analyzePath(fullPath).exists;
 
+          const selectedText = e.target.options[e.target.selectedIndex]?.textContent || selectedXmlPath;
+          if (typeof window.pythonOutput === 'function') {
+            window.pythonOutput(`\n[RoboSpace] Selected scene/robot: "${selectedText}"`);
+          }
+
           if (!exists && this.parentBridge) {
             const makerDir = selectedXmlPath.split('/')[0];
-            const selectedText = e.target.options[e.target.selectedIndex]?.textContent || makerDir;
+            if (typeof window.pythonOutput === 'function') {
+              window.pythonOutput(`[RoboSpace] Downloading assets from MuJoCo Menagerie...`);
+            }
             await this.parentBridge._handleLoadMenagerieRobot({
               xml_path: selectedXmlPath,
               dir: makerDir,
               name: selectedText,
             });
           } else {
+            if (typeof window.pythonOutput === 'function') {
+              window.pythonOutput(`[RoboSpace] Loading scene from cache...`);
+            }
             await this.reloadScene(selectedXmlPath);
+            if (typeof window.pythonOutput === 'function') {
+              window.pythonOutput(`✓ [RoboSpace] Loaded "${selectedText}" successfully.`);
+            }
           }
           this.parentBridge?.emitDirty('scene');
         } catch (err) {
           console.error('[scene-selector] failed to load scene:', err);
+          if (typeof window.pythonOutput === 'function') {
+            window.pythonOutput(`✗ [RoboSpace] Failed to load "${e.target.value}": ${err.message || err}`);
+          }
         }
       });
     }

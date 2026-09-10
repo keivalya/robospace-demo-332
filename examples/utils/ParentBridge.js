@@ -891,6 +891,9 @@ export class ParentBridge {
     } else {
       const result = await this._fetchAndWriteMenagerieRobot(makerDir, xml_path, (p) => {
         this._send('SCENE_PROGRESS', { projectId: this.projectId, requestId, phase: 'assets', ...p });
+        if (typeof window.pythonOutput === 'function') {
+          window.pythonOutput(`[RoboSpace] Downloading asset ${p.done}/${p.total}: ${p.path}`);
+        }
       });
       homePose = result.homePose;
       entryXmlPath = xml_path;
@@ -903,6 +906,9 @@ export class ParentBridge {
 
     this.suppressCameraReset = false;
     await demo.reloadScene(entryXmlPath);
+    if (typeof window.pythonOutput === 'function') {
+      window.pythonOutput(`✓ [RoboSpace] Loaded robot "${name || makerDir}" successfully.`);
+    }
 
     if (homePose) {
       sceneWriter.applyHomePose(demo, homePose);
@@ -1143,9 +1149,12 @@ export class ParentBridge {
   _ensureSceneOption(sceneName, xmlPath) {
     const sceneSelector = document.getElementById('scene-selector');
     if (!sceneSelector) return;
-    
-    // Clear all existing options to ensure only one robot is visible!
-    sceneSelector.innerHTML = '';
+
+    let existingOption = sceneSelector.querySelector(`option[value="${CSS.escape(xmlPath)}"]`);
+    if (existingOption) {
+      sceneSelector.value = xmlPath;
+      return;
+    }
 
     // Extract robot name from XML if possible
     let robotName = null;
@@ -1169,9 +1178,17 @@ export class ParentBridge {
       robotName = xmlPath.startsWith('custom_scenes/') ? `Custom: ${sceneName}` : sceneName;
     }
 
+    let customGroup = sceneSelector.querySelector('optgroup[label="Uploaded / Custom"]');
+    if (!customGroup) {
+      customGroup = document.createElement('optgroup');
+      customGroup.label = 'Uploaded / Custom';
+      sceneSelector.appendChild(customGroup);
+    }
+
     const option = document.createElement('option');
     option.value = xmlPath;
     option.textContent = robotName;
-    sceneSelector.appendChild(option);
+    customGroup.appendChild(option);
+    sceneSelector.value = xmlPath;
   }
 }

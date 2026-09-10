@@ -385,15 +385,21 @@ export class FileUploadManager {
     async loadUploadedScene() {
       const sceneName = this.currentUploadPath.split('/')[1];
       const sceneInfo = this.uploadedFiles.get(sceneName);
-      
-      const sceneSelector = document.getElementById('scene-selector');
-      if (sceneSelector) {
-        sceneSelector.innerHTML = '';
-        const option = document.createElement('option');
-        option.value = sceneInfo.xmlPath;
-        option.textContent = sceneInfo.robotName || sceneName;
-        sceneSelector.appendChild(option);
-        sceneSelector.value = sceneInfo.xmlPath;
+
+      if (this.parentContext.parentBridge?._ensureSceneOption) {
+        this.parentContext.parentBridge._ensureSceneOption(sceneInfo.robotName || sceneName, sceneInfo.xmlPath);
+      } else {
+        const sceneSelector = document.getElementById('scene-selector');
+        if (sceneSelector) {
+          let option = sceneSelector.querySelector(`option[value="${CSS.escape(sceneInfo.xmlPath)}"]`);
+          if (!option) {
+            option = document.createElement('option');
+            option.value = sceneInfo.xmlPath;
+            option.textContent = sceneInfo.robotName || sceneName;
+            sceneSelector.appendChild(option);
+          }
+          sceneSelector.value = sceneInfo.xmlPath;
+        }
       }
       
       this.parentContext.params.scene = sceneInfo.xmlPath;
