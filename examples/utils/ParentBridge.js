@@ -660,19 +660,10 @@ export class ParentBridge {
   }
 
   async _handleNewProject(_payload) {
-    // Reset to the default built-in scene + default script. This matches the
-    // empty-state UX without forcing the user to refresh the page.
+    // Reset to the default built-in scene + default script.
     const defaultScene = 'universal_robots_ur5e/scene.xml';
     this.demo.params.scene = defaultScene;
-    const sceneSelector = document.getElementById('scene-selector');
-    if (sceneSelector) {
-      sceneSelector.innerHTML = '';
-      const option = document.createElement('option');
-      option.value = defaultScene;
-      option.textContent = 'Universal Robots UR5e';
-      sceneSelector.appendChild(option);
-      sceneSelector.value = defaultScene;
-    }
+    this._ensureSceneOption('Universal Robots UR5e', defaultScene);
 
     this.suppressCameraReset = false;
     await this.demo.reloadScene();
