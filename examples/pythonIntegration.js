@@ -65,21 +65,9 @@ export async function initializePythonEnvironment(demo) {
             return demo.model.nu;
         };
 
-        window.getActuatorNames = () => {
-            if (!demo.model) return [];
-            const names = [];
-            const textDecoder = new TextDecoder("utf-8");
-            const nullChar = textDecoder.decode(new ArrayBuffer(1));
-
-            for (let i = 0; i < demo.model.nu; i++) {
-                const nameAddress = demo.model.name_actuatoradr[i];
-                const nameBytes = demo.model.names.subarray(nameAddress);
-                const decodedString = textDecoder.decode(nameBytes);
-                const name = decodedString.split(nullChar)[0];
-                names.push(name || `actuator_${i}`);
-            }
-            return names;
-        };
+        window.getActuatorNames = () => (demo.model
+            ? readNames(demo.model, demo.model.name_actuatoradr, demo.model.nu, 'actuator')
+            : []);
 
         window.getActuatorRanges = () => {
             if (!demo.model) return [];
@@ -120,20 +108,23 @@ export async function initializePythonEnvironment(demo) {
 
         // Setup Python output to go to the console panel
         const MAX_OUTPUT_LINES = 2000;
+        let cachedOutputArea = null;
         window.pythonOutput = (text) => {
-            const outputArea = document.getElementById('python-output');
-            if (outputArea) {
+            if (!cachedOutputArea) {
+                cachedOutputArea = document.getElementById('python-output');
+            }
+            if (cachedOutputArea) {
                 const line = document.createElement('div');
                 line.style.whiteSpace = 'pre-wrap';
                 line.textContent = text;
-                outputArea.appendChild(line);
+                cachedOutputArea.appendChild(line);
                 // Bounded, because one <div> per line and no limit is a slow tab death
                 // once scripts start looping — a control loop printing every frame adds
                 // 60 nodes a second. Keep the tail; that is the part being read.
-                while (outputArea.childElementCount > MAX_OUTPUT_LINES) {
-                    outputArea.removeChild(outputArea.firstElementChild);
+                while (cachedOutputArea.childElementCount > MAX_OUTPUT_LINES) {
+                    cachedOutputArea.removeChild(cachedOutputArea.firstElementChild);
                 }
-                outputArea.scrollTop = outputArea.scrollHeight;
+                cachedOutputArea.scrollTop = cachedOutputArea.scrollHeight;
             }
         };
 

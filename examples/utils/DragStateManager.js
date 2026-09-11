@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { Vector3 } from 'three';
 
+const TEXT_DECODER = new TextDecoder('utf-8');
+
 export class DragStateManager {
     constructor(scene, renderer, camera, container, controls) {
         this.scene = scene;
@@ -156,11 +158,10 @@ export class DragStateManager {
         const bodyID = this.previouslySelected.bodyID;
         if (typeof bodyID !== 'number' || bodyID < 0) return null;
         const model = window._roboDemo.model;
-        const decoder = new TextDecoder('utf-8');
         if (model.name_bodyadr && bodyID < model.nbody) {
             const addr = model.name_bodyadr[bodyID];
             if (Number.isInteger(addr) && addr >= 0 && addr < model.names.length) {
-                return decoder.decode(model.names.subarray(addr)).split('\0')[0] || `body_${bodyID}`;
+                return TEXT_DECODER.decode(model.names.subarray(addr)).split('\0')[0] || `body_${bodyID}`;
             }
         }
         return `body_${bodyID}`;

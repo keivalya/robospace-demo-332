@@ -310,8 +310,10 @@ export class RoboSpaceDemo {
     this.controls.screenSpacePanning = true;
     this.controls.update();
 
-    window.addEventListener('resize', this.onWindowResize.bind(this));
-    window.addEventListener('keydown', this.onKeyDown.bind(this));
+    this._onWindowResizeBound = this.onWindowResize.bind(this);
+    this._onKeyDownBound = this.onKeyDown.bind(this);
+    window.addEventListener('resize', this._onWindowResizeBound);
+    window.addEventListener('keydown', this._onKeyDownBound);
 
     // Initialize the Drag State Manager.
     this.dragStateManager = new DragStateManager(this.scene, this.renderer, this.camera, this.container.parentElement, this.controls);
@@ -831,25 +833,12 @@ export class RoboSpaceDemo {
    */
   _startRenderWatchdog() {
     let lastSeen = -1;
-    setInterval(() => {
+    if (this._watchdogTimer) clearInterval(this._watchdogTimer);
+    this._watchdogTimer = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
         lastSeen = this._frameCount;
         return;
       }
-      /*
-       * An unrendered iframe gets no rAF callbacks at all, yet its document still
-       * reports visibilityState 'visible' — visibility tracks the top-level
-       * browsing context, not this frame's layout — so the guard above misses it.
-       *
-       * This is not hypothetical: the editor keeps the iframe display:none until
-       * the bridge handshake completes (ProjectEditorShell renders it with
-       * `display: phase === 'ready' ? 'block' : 'none'`). Without this check the
-       * watchdog fired every 2s during startup, and forever if the handshake
-       * failed — each time restarting a loop that cannot possibly produce a frame.
-       *
-       * Zero layout size is the reliable signal: a display:none iframe reports
-       * innerWidth/innerHeight of 0.
-       */
       if (typeof window !== 'undefined' && (window.innerWidth === 0 || window.innerHeight === 0)) {
         lastSeen = this._frameCount;
         return;
@@ -865,6 +854,22 @@ export class RoboSpaceDemo {
       }
       lastSeen = this._frameCount;
     }, 2000);
+  }
+
+  dispose() {
+    if (this._watchdogTimer) {
+      clearInterval(this._watchdogTimer);
+      this._watchdogTimer = null;
+    }
+    if (this._onWindowResizeBound) {
+      window.removeEventListener('resize', this._onWindowResizeBound);
+    }
+    if (this._onKeyDownBound) {
+      window.removeEventListener('keydown', this._onKeyDownBound);
+    }
+    if (this.renderer) {
+      this.renderer.setAnimationLoop(null);
+    }
   }
 
   _onRenderFault(err) {
