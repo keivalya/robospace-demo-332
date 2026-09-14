@@ -478,6 +478,11 @@ export async function initializePythonEnvironment(demo) {
             return out;
         };
 
+        window.getCameraNames = () => {
+            if (!demo.model) return [];
+            return readNames(demo.model, demo.model.name_camadr, demo.model.ncam, 'camera');
+        };
+
         window.getNumCameras = () => {
             if (!demo.model) return 0;
             return demo.model.ncam;
@@ -485,41 +490,57 @@ export async function initializePythonEnvironment(demo) {
 
         window.getCameraInfo = (cameraId) => {
             if (!demo.model || !demo.simulation) return null;
-            if (cameraId >= demo.model.ncam) return null;
-
-            // readNames, not decode(names).split('\0')[byteOffset] — see mujocoUtils.js.
-            const camName = readNames(demo.model, demo.model.name_camadr, demo.model.ncam, 'camera')[cameraId];
-
-            // Get camera parameters
-            const camBodyId = demo.model.cam_bodyid[cameraId];
-            const fovy = demo.model.cam_fovy[cameraId];
-
-            // Get camera position from simulation
-            let position = [0, 0, 0];
-            if (camBodyId >= 0) {
-                const idx = camBodyId * 3;
-                position = [
-                    demo.simulation.xpos[idx],
-                    demo.simulation.xpos[idx + 1],
-                    demo.simulation.xpos[idx + 2]
-                ];
+            const names = window.getCameraNames();
+            let idx = -1;
+            if (typeof cameraId === 'string') {
+                idx = names.indexOf(cameraId);
+            } else if (typeof cameraId === 'number') {
+                idx = cameraId;
             }
+            if (idx < 0 || idx >= demo.model.ncam) return null;
 
-            // Get camera offset
-            const offset = [
-                demo.model.cam_pos[cameraId * 3],
-                demo.model.cam_pos[cameraId * 3 + 1],
-                demo.model.cam_pos[cameraId * 3 + 2]
+            const camName = names[idx];
+            const camBodyId = demo.model.cam_bodyid ? demo.model.cam_bodyid[idx] : -1;
+            const fovy = demo.model.cam_fovy ? demo.model.cam_fovy[idx] : 45;
+
+            const pos = [
+                demo.simulation.cam_xpos[idx * 3 + 0],
+                demo.simulation.cam_xpos[idx * 3 + 1],
+                demo.simulation.cam_xpos[idx * 3 + 2],
             ];
+            const mat = Array.from(demo.simulation.cam_xmat.subarray(idx * 9, idx * 9 + 9));
+            const quat = matToQuat(mat);
 
             return {
-                id: cameraId,
+                id: idx,
                 name: camName,
                 bodyId: camBodyId,
                 fov: fovy,
-                position: position,
-                offset: offset
+                pos,
+                mat,
+                quat,
             };
+        };
+
+        window.renderCameraImage = (nameOrId, width = 320, height = 240, format = 'numpy') => {
+            if (!demo.cameraViewer || !demo.renderer || !demo.scene || !demo.simulation || !demo.model) return null;
+            return demo.cameraViewer.captureImage(demo.renderer, demo.scene, demo.simulation, demo.model, nameOrId, width, height, format);
+        };
+
+        window.showCameraViewer = (nameOrId) => {
+            if (demo.cameraViewer) demo.cameraViewer.show(nameOrId);
+        };
+
+        window.hideCameraViewer = () => {
+            if (demo.cameraViewer) demo.cameraViewer.hide();
+        };
+
+        window.showSensorMonitor = () => {
+            if (demo.sensorMonitor) demo.sensorMonitor.show();
+        };
+
+        window.hideSensorMonitor = () => {
+            if (demo.sensorMonitor) demo.sensorMonitor.hide();
         };
 
         // Simplified sensor data with proper checks
@@ -1493,8 +1514,8 @@ def help_api():
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),
         ('time', ['get_time', 'get_steps', 'dt', 'is_paused']),
         ('scenes (these DO need await)', ['list_robots', 'load_robot', 'load_scene']),
-        ('sensors', ['sensor', 'sensors', 'get_sensor_data', 'print_sensors']),
-        ('cameras', ['get_camera_names', 'get_camera_info', 'print_cameras']),
+        ('sensors', ['sensor', 'sensors', 'sensor_names', 'sensor_info', 'show_sensors', 'hide_sensors', 'get_sensor_data', 'print_sensors']),
+        ('cameras', ['camera_names', 'camera_info', 'camera_image', 'show_camera', 'hide_camera', 'get_camera_names', 'get_camera_info', 'print_cameras']),
     ]
     g = globals()
     print("")
@@ -1511,65 +1532,117 @@ def help_api():
     print("np, math and json are imported. window is the browser's window object.")
 
 def get_num_cameras():
-    """Get number of cameras in the model"""
+    """Get number of cameras in the model."""
     return window.getNumCameras()
 
+def camera_names():
+    """List of all available camera names."""
+    return list(window.getCameraNames().to_py())
+
 def get_camera_names():
-    """Get list of camera names"""
-    return window.getCameraNames().to_py()
+    """List of all available camera names."""
+    return camera_names()
+
+def camera_info(camera_id=0):
+    """Information and world pose of a camera by name or index."""
+    info = window.getCameraInfo(camera_id)
+    return info.to_py() if info else None
+
+def get_camera_info(camera_id=0):
+    """Information and world pose of a camera by name or index."""
+    return camera_info(camera_id)
+
+def show_camera(camera_id=None):
+    """Open the camera PiP window in the viewport."""
+    window.showCameraViewer(camera_id)
+
+def hide_camera():
+    """Hide the camera PiP window."""
+    window.hideCameraViewer()
+
+def camera_image(camera_id=0, width=320, height=240, format="numpy"):
+    """Capture an image from a camera sensor.
+
+    format='numpy': returns uint8 numpy array of shape (height, width, 3).
+    format='base64': returns base64 PNG data URL string.
+    """
+    res = window.renderCameraImage(camera_id, width, height, format)
+    if not res:
+        return None
+    if format == 'numpy':
+        arr = np.array(res.data.to_py(), dtype=np.uint8)
+        return arr.reshape((res.height, res.width, res.channels))
+    return str(res)
+
+def get_camera_image(camera_id=0, width=320, height=240, format="numpy"):
+    """Capture an image from a camera sensor."""
+    return camera_image(camera_id, width, height, format)
 
 # Sensor functions
 def get_sensor_data():
-    """Get all sensor readings"""
+    """Get raw flat sensordata array."""
     return window.getSensorData().to_py()
 
 def get_num_sensors():
-    """Get number of sensors"""
+    """Get number of sensors in the model."""
     return window.getNumSensors()
 
+def sensor_names():
+    """List of all sensor names."""
+    return list(window.getSensorNames().to_py())
+
 def get_sensor_names():
-    """Get sensor names"""
-    return window.getSensorNames().to_py()
+    """List of all sensor names."""
+    return sensor_names()
+
+def sensor_info(name_or_id):
+    """Metadata for a sensor: name, address, dimension, type."""
+    names = sensor_names()
+    target = None
+    if isinstance(name_or_id, int):
+        if 0 <= name_or_id < len(names):
+            target = names[name_or_id]
+    else:
+        target = str(name_or_id)
+    for s in window.getSensors().to_py():
+        if s['name'] == target:
+            return s
+    listing = ', '.join(names) if names else '(none)'
+    raise ValueError(f"no sensor named {name_or_id!r}. Available: {listing}")
+
+def show_sensors():
+    """Open the Sensor Monitor panel in the viewport."""
+    window.showSensorMonitor()
+
+def hide_sensors():
+    """Hide the Sensor Monitor panel."""
+    window.hideSensorMonitor()
 
 def print_sensors():
-    """Print all available sensors"""
+    """Print all available sensors with live readings."""
     n_sensors = get_num_sensors()
-    n_cameras = get_num_cameras()
-    
-    print(f"\\nSensors: {n_sensors}")
+    print(f"\\nSensors ({n_sensors}):")
     if n_sensors > 0:
-        names = get_sensor_names()
-        data = get_sensor_data()
-        for i in range(min(n_sensors, len(names))):
-            value = data[i] if i < len(data) else 0
-            print(f"  [{i}] {names[i]:20s} = {value:.4f}")
-    
-    print(f"\\nCameras: {n_cameras}")
-    if n_cameras > 0:
-        cam_names = get_camera_names()
-        for i, name in enumerate(cam_names):
-            print(f"  [{i}] {name}")
+        vals = sensors()
+        for i, (name, val) in enumerate(vals.items()):
+            if isinstance(val, np.ndarray):
+                v_str = '[' + ', '.join(f"{x:7.3f}" for x in val) + ']'
+            else:
+                v_str = f"{val:7.4f}"
+            print(f"  [{i:2d}] {name:22s} = {v_str}")
+    cams = camera_names()
+    print(f"\\nCameras ({len(cams)}):")
+    for i, name in enumerate(cams):
+        print(f"  [{i:2d}] {name}")
 
-def camera_status():
-    """Check camera status and availability"""
-    n_cams = get_num_cameras()
-    if n_cams > 0:
-        print(f"✓ {n_cams} camera(s) available")
-        names = get_camera_names()
-        for i, name in enumerate(names):
-            print(f"  [{i}] {name}")
-        print("\\nCamera viewer is visible in top-left corner")
-    else:
-        print("✗ No cameras in this model")
-        print("  Camera viewer is hidden")
-    return n_cams
-
-def get_camera_info(camera_id=0):
-    """Get camera information"""
-    info = window.getCameraInfo(camera_id)
-    if info:
-        return info.to_py()
-    return None
+def print_cameras():
+    """Print all available cameras."""
+    cams = camera_names()
+    print(f"\\nCameras ({len(cams)}):")
+    for i, name in enumerate(cams):
+        info = camera_info(name)
+        fov_str = f"fov={info['fov']:.1f}" if info else ""
+        print(f"  [{i:2d}] {name:20s} {fov_str}")
 
 def list_robots():
     """Names accepted by load_robot()."""

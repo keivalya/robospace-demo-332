@@ -344,6 +344,29 @@ export class ParentBridge {
             recoverable: true,
           }, data.id));
         break;
+      case 'TOGGLE_CAMERA': {
+        const { visible, camera } = data.payload || {};
+        if (visible === true) this.demo.cameraViewer?.show(camera);
+        else if (visible === false) this.demo.cameraViewer?.hide();
+        else this.demo.cameraViewer?.toggle();
+        this._send('CAMERA_STATUS', {
+          visible: !!this.demo.cameraViewer?.visible,
+          activeCamera: this.demo.cameraViewer?.activeCamera?.name || null,
+          cameras: this.demo.cameraViewer?.cameras?.map((c) => c.name) || [],
+        }, data.id);
+        break;
+      }
+      case 'TOGGLE_SENSORS': {
+        const { visible } = data.payload || {};
+        if (visible === true) this.demo.sensorMonitor?.show();
+        else if (visible === false) this.demo.sensorMonitor?.hide();
+        else this.demo.sensorMonitor?.toggle();
+        this._send('SENSORS_STATUS', {
+          visible: !!this.demo.sensorMonitor?.visible,
+          sensors: this.demo.sensorMonitor?.sensors?.map((s) => ({ name: s.name, type: s.typeName, unit: s.unit })) || [],
+        }, data.id);
+        break;
+      }
       default:
         // Unknown but well-formed message — ignore.
         break;
@@ -506,7 +529,8 @@ export class ParentBridge {
     let homePose = null;
     if (packId && sceneDir) {
       const { robotPacks } = await this._agentModules();
-      if (Object.prototype.hasOwnProperty.call(robotPacks.ROBOT_MANIFESTS, packId)) {
+      const isKnown = !robotPacks.ROBOT_MANIFESTS || Object.prototype.hasOwnProperty.call(robotPacks.ROBOT_MANIFESTS, packId);
+      if (isKnown) {
         let lastProgressAt = 0;
         const pack = await robotPacks.ensureRobotPack(demo.mujoco, packId, sceneDir, {
           onProgress: (p) => {

@@ -5,7 +5,7 @@
 // window.robospaceLoadRobot(), so what you verify by hand is what the agent runs.
 
 import { ensureRobotPack } from './robotPacks.js';
-import { readModelNames } from '../mujocoUtils.js';
+import { readModelNames, readNames } from '../mujocoUtils.js';
 import { assertSafeSceneName, safeRelativePath, resolveEntryXmlPath } from './safePath.js';
 
 export function ensureDir(FS, dirPath) {
@@ -50,14 +50,24 @@ export { assertSafeSceneName, safeRelativePath, resolveEntryXmlPath } from './sa
  *  rather than against guessed actuator names. */
 export function readModelStats(model) {
   const { actuatorNames, jointNames } = readModelNames(model);
+  const cameraNames = (model.ncam && model.ncam > 0)
+    ? readNames(model, model.name_camadr, model.ncam, 'camera')
+    : [];
+  const sensorNames = (model.nsensor && model.nsensor > 0)
+    ? readNames(model, model.name_sensoradr, model.nsensor, 'sensor')
+    : [];
   return {
     nq: model.nq,
     nv: model.nv,
     nu: model.nu,
     nbody: model.nbody,
     ngeom: model.ngeom,
+    ncam: model.ncam || 0,
+    nsensor: model.nsensor || 0,
     actuatorNames,
     jointNames,
+    cameraNames,
+    sensorNames,
   };
 }
 
