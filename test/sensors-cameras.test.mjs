@@ -7,7 +7,61 @@ import load_mujoco from '../dist/mujoco_wasm.js';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel, readNames } from '../examples/mujocoUtils.js';
 import { readModelStats } from '../examples/utils/sceneWriter.js';
-import { SENSOR_TYPES } from '../examples/utils/SensorMonitor.js';
+import { SensorMonitor, SENSOR_TYPES } from '../examples/utils/SensorMonitor.js';
+import { CameraViewer } from '../examples/utils/CameraViewer.js';
+
+function createMockDom() {
+  const makeEl = (tag = 'div') => {
+    const listeners = {};
+    const classes = new Set();
+    const children = [];
+    const attrs = {};
+    const el = {
+      tagName: tag.toUpperCase(),
+      style: {},
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      classList: {
+        add: (c) => classes.add(c),
+        remove: (c) => classes.delete(c),
+        toggle: (c, force) => {
+          const res = force !== undefined ? !!force : !classes.has(c);
+          if (res) classes.add(c); else classes.delete(c);
+          return res;
+        },
+        contains: (c) => classes.has(c),
+      },
+      addEventListener: (ev, fn) => {
+        listeners[ev] = listeners[ev] || [];
+        listeners[ev].push(fn);
+      },
+      removeEventListener: (ev, fn) => {
+        if (listeners[ev]) listeners[ev] = listeners[ev].filter((f) => f !== fn);
+      },
+      click: () => {
+        (listeners['click'] || []).forEach((fn) => fn({ target: el }));
+      },
+      appendChild: (ch) => { children.push(ch); return ch; },
+      querySelector: () => makeEl('div'),
+      querySelectorAll: () => [],
+      setAttribute: (k, v) => { attrs[k] = String(v); },
+      getAttribute: (k) => attrs[k] || null,
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200 }),
+      children,
+    };
+    return el;
+  };
+  return {
+    createElement: makeEl,
+    getElementById: () => makeEl('div'),
+    body: makeEl('body'),
+  };
+}
+
+if (!globalThis.document) {
+  globalThis.document = createMockDom();
+}
 
 let failures = 0;
 const ok = (m) => console.log(`  ok    ${m}`);
@@ -146,6 +200,83 @@ console.log('\nmodel with camera and sensor compilation & decoding');
   // cam_xpos and cam_xmat exist and are valid Float64Arrays
   check(simulation.cam_xpos.length === 6, 'cam_xpos has 6 coordinates (2 cameras x 3)');
   check(simulation.cam_xmat.length === 18, 'cam_xmat has 18 coordinates (2 cameras x 9)');
+
+  console.log('\nmodel without sensors (telemetry fallback & toggle buttons)');
+  const testSceneNoSensors = `
+<mujoco model="no_sensors_robot">
+  <worldbody>
+    <light pos="0 0 3"/>
+    <geom name="floor" type="plane" size="1 1 0.1"/>
+    <body name="link1" pos="0 0 0.5">
+      <joint name="joint1" type="hinge" axis="0 0 1"/>
+      <geom name="geom1" type="box" size="0.1 0.1 0.1"/>
+      <body name="link2" pos="0.2 0 0">
+        <joint name="joint2" type="slide" axis="1 0 0"/>
+        <geom name="geom2" type="sphere" size="0.05"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="motor1" joint="joint1"/>
+    <motor name="motor2" joint="joint2"/>
+  </actuator>
+</mujoco>
+`;
+  mujoco.FS.writeFile('/working_test/no_sensors.xml', testSceneNoSensors);
+  const modelNoSensors = compileModel(mujoco, '/working_test/no_sensors.xml');
+  const stateNoSensors = new mujoco.State(modelNoSensors);
+  const simNoSensors = new mujoco.Simulation(modelNoSensors, stateNoSensors);
+
+  check(modelNoSensors.nsensor === 0, 'model has 0 native sensors');
+  check(modelNoSensors.ncam === 0, 'model has 0 native cameras');
+
+  const container = globalThis.document.createElement('div');
+  const sensorMon = new SensorMonitor(container);
+  const camBtn = globalThis.document.createElement('button');
+  const sensorBtn = globalThis.document.createElement('button');
+
+  sensorMon.setToggleButton(sensorBtn);
+  check(!sensorMon.visible, 'sensor monitor starts hidden');
+  check(!sensorBtn.classList.contains('active'), 'sensor button starts inactive');
+
+  sensorBtn.click();
+  check(sensorMon.visible, 'clicking button toggles sensor monitor visible');
+  check(sensorBtn.classList.contains('active'), 'button gets active class when visible');
+
+  sensorBtn.click();
+  check(!sensorMon.visible, 'clicking button again hides sensor monitor');
+  check(!sensorBtn.classList.contains('active'), 'button loses active class when hidden');
+
+  // onModelChanged with 0 sensors should populate virtual telemetry sensors
+  sensorMon.onModelChanged(modelNoSensors, simNoSensors);
+  check(sensorMon.sensors.length === 6, 'virtual sensors created: 2 joint pos + 2 joint vel + 2 actuator ctrl');
+  check(sensorBtn.textContent.includes('6'), 'button label updated with sensor count');
+
+  // Verify telemetry sampling
+  simNoSensors.qpos[0] = 0.42;
+  simNoSensors.qvel[1] = -1.25;
+  simNoSensors.ctrl[0] = 3.5;
+  sensorMon.sample(simNoSensors, modelNoSensors);
+
+  const snapshot = sensorMon.getSensorSnapshot();
+  const snapMap = Object.fromEntries(snapshot.map((s) => [s.name, s.value[0]]));
+  check(Math.abs(snapMap['joint1_pos'] - 0.42) < 1e-5, 'joint1_pos sampled correctly');
+  check(Math.abs(snapMap['joint2_vel'] - (-1.25)) < 1e-5, 'joint2_vel sampled correctly');
+  check(Math.abs(snapMap['motor1_ctrl'] - 3.5) < 1e-5, 'motor1_ctrl sampled correctly');
+
+  // CameraViewer virtual cameras & toggle
+  const camViewer = new CameraViewer(container);
+  camViewer.setToggleButton(camBtn);
+  check(!camViewer.visible, 'camera viewer starts hidden');
+  camBtn.click();
+  check(camViewer.visible, 'clicking camera button toggles visible');
+  check(camBtn.classList.contains('active'), 'camera button gets active class');
+  camBtn.click();
+  check(!camViewer.visible, 'clicking camera button again hides it');
+
+  camViewer.onModelChanged(modelNoSensors, simNoSensors);
+  check(camViewer.cameras.length === 2, 'virtual fallback cameras created when ncam is 0');
+  check(camViewer.cameras[0].isVirtual && camViewer.cameras[1].isVirtual, 'both cameras are virtual fallbacks');
 }
 
 if (failures > 0) {

@@ -462,28 +462,40 @@ export async function initializePythonEnvironment(demo) {
         window.getSensors = () => {
             const m = demo.model;
             if (!m || !demo.simulation) return [];
-            const data = demo.simulation.sensordata;
-            const names = readNames(m, m.name_sensoradr, m.nsensor, 'sensor');
-            const out = [];
-            for (let i = 0; i < m.nsensor; i++) {
-                const adr = m.sensor_adr[i];
-                const dim = m.sensor_dim[i];
-                out.push({
-                    name: names[i],
-                    adr,
-                    dim,
-                    value: Array.from(data.subarray(adr, adr + dim)),
-                });
+            if (demo.sensorMonitor && demo.sensorMonitor.sensors.length > 0) {
+                return demo.sensorMonitor.getSensorSnapshot();
             }
-            return out;
+            if (m.nsensor > 0 && demo.simulation.sensordata) {
+                const data = demo.simulation.sensordata;
+                const names = readNames(m, m.name_sensoradr, m.nsensor, 'sensor');
+                const out = [];
+                for (let i = 0; i < m.nsensor; i++) {
+                    const adr = m.sensor_adr[i];
+                    const dim = m.sensor_dim[i];
+                    out.push({
+                        name: names[i],
+                        adr,
+                        dim,
+                        value: Array.from(data.subarray(adr, adr + dim)),
+                    });
+                }
+                return out;
+            }
+            return [];
         };
 
         window.getCameraNames = () => {
-            if (!demo.model) return [];
+            if (demo.cameraViewer && demo.cameraViewer.cameras.length > 0) {
+                return demo.cameraViewer.cameras.map((c) => c.name);
+            }
+            if (!demo.model || !demo.model.ncam) return [];
             return readNames(demo.model, demo.model.name_camadr, demo.model.ncam, 'camera');
         };
 
         window.getNumCameras = () => {
+            if (demo.cameraViewer && demo.cameraViewer.cameras.length > 0) {
+                return demo.cameraViewer.cameras.length;
+            }
             if (!demo.model) return 0;
             return demo.model.ncam;
         };

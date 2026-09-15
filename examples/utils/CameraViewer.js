@@ -86,10 +86,15 @@ export class CameraViewer {
   }
 
   setToggleButton(btn) {
+    if (this._toggleBtn && this._toggleBtnHandler) {
+      this._toggleBtn.removeEventListener('click', this._toggleBtnHandler);
+    }
     this._toggleBtn = btn;
     if (btn) {
-      btn.addEventListener('click', () => this.toggle());
+      this._toggleBtnHandler = () => this.toggle();
+      btn.addEventListener('click', this._toggleBtnHandler);
       this._updateButtonLabel();
+      btn.classList.toggle('active', !!this._visible);
     }
   }
 
@@ -222,7 +227,7 @@ export class CameraViewer {
     renderer.setScissor(x, y, width, height);
     renderer.setViewport(x, y, width, height);
 
-    renderer.clearDepth();
+    renderer.clear(true, true, true);
     renderer.render(scene, this._threeCamera);
 
     // Restore primary viewport

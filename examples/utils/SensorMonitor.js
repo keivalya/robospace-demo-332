@@ -96,10 +96,15 @@ export class SensorMonitor {
   }
 
   setToggleButton(btn) {
+    if (this._toggleBtn && this._toggleBtnHandler) {
+      this._toggleBtn.removeEventListener('click', this._toggleBtnHandler);
+    }
     this._toggleBtn = btn;
     if (btn) {
-      btn.addEventListener('click', () => this.toggle());
+      this._toggleBtnHandler = () => this.toggle();
+      btn.addEventListener('click', this._toggleBtnHandler);
       this._updateButtonLabel();
+      btn.classList.toggle('active', !!this._visible);
     }
   }
 
@@ -132,8 +137,80 @@ export class SensorMonitor {
           unit: meta.unit,
           adr,
           dim,
+          isNative: true,
         });
         this._currentValues.push(dim === 1 ? 0 : new Array(dim).fill(0));
+      }
+    } else if (model) {
+      // Synthesize telemetry sensors from joint encoders and actuators
+      let sensorIdx = 0;
+
+      // 1. Joint position sensors
+      if (model.njnt > 0) {
+        const jntNames = readNames(model, model.name_jntadr, model.njnt, 'joint');
+        for (let j = 0; j < model.njnt; j++) {
+          const type = model.jnt_type ? model.jnt_type[j] : 3;
+          if (type === 0) continue; // skip freejoint
+          const isSlide = type === 2;
+          const qposadr = model.jnt_qposadr ? model.jnt_qposadr[j] : j;
+          const name = `${jntNames[j] || `joint_${j}`}_pos`;
+          this._sensors.push({
+            id: sensorIdx++,
+            name,
+            typeId: 200,
+            typeName: 'Joint Position',
+            icon: '🔄',
+            unit: isSlide ? 'm' : 'rad',
+            source: 'qpos',
+            adr: qposadr,
+            dim: 1,
+            isNative: false,
+          });
+          this._currentValues.push(0);
+        }
+
+        // 2. Joint velocity sensors
+        for (let j = 0; j < model.njnt; j++) {
+          const type = model.jnt_type ? model.jnt_type[j] : 3;
+          if (type === 0) continue; // skip freejoint
+          const isSlide = type === 2;
+          const dofadr = model.jnt_dofadr ? model.jnt_dofadr[j] : j;
+          const name = `${jntNames[j] || `joint_${j}`}_vel`;
+          this._sensors.push({
+            id: sensorIdx++,
+            name,
+            typeId: 201,
+            typeName: 'Joint Velocity',
+            icon: '⚡',
+            unit: isSlide ? 'm/s' : 'rad/s',
+            source: 'qvel',
+            adr: dofadr,
+            dim: 1,
+            isNative: false,
+          });
+          this._currentValues.push(0);
+        }
+      }
+
+      // 3. Actuator effort sensors
+      if (model.nu > 0) {
+        const actNames = readNames(model, model.name_actuatoradr, model.nu, 'actuator');
+        for (let a = 0; a < model.nu; a++) {
+          const name = `${actNames[a] || `actuator_${a}`}_ctrl`;
+          this._sensors.push({
+            id: sensorIdx++,
+            name,
+            typeId: 202,
+            typeName: 'Actuator Ctrl',
+            icon: '🦾',
+            unit: 'N·m',
+            source: 'ctrl',
+            adr: a,
+            dim: 1,
+            isNative: false,
+          });
+          this._currentValues.push(0);
+        }
       }
     }
 
@@ -146,19 +223,26 @@ export class SensorMonitor {
    * Called per frame from the simulation step / render loop.
    */
   sample(simulation, model) {
-    if (!simulation || !simulation.sensordata || this._sensors.length === 0) return;
-
-    const data = simulation.sensordata;
+    if (!simulation || this._sensors.length === 0) return;
 
     for (let i = 0; i < this._sensors.length; i++) {
       const s = this._sensors[i];
-      if (s.dim === 1) {
-        this._currentValues[i] = data[s.adr];
-      } else {
-        const slice = this._currentValues[i];
-        for (let d = 0; d < s.dim; d++) {
-          slice[d] = data[s.adr + d];
+      if (s.isNative) {
+        if (!simulation.sensordata) continue;
+        if (s.dim === 1) {
+          this._currentValues[i] = simulation.sensordata[s.adr];
+        } else {
+          const slice = this._currentValues[i];
+          for (let d = 0; d < s.dim; d++) {
+            slice[d] = simulation.sensordata[s.adr + d];
+          }
         }
+      } else if (s.source === 'qpos') {
+        if (simulation.qpos) this._currentValues[i] = simulation.qpos[s.adr];
+      } else if (s.source === 'qvel') {
+        if (simulation.qvel) this._currentValues[i] = simulation.qvel[s.adr];
+      } else if (s.source === 'ctrl') {
+        if (simulation.ctrl) this._currentValues[i] = simulation.ctrl[s.adr];
       }
     }
 
@@ -176,6 +260,18 @@ export class SensorMonitor {
       this._dirty = true;
       this._scheduleUpdate();
     }
+  }
+
+  getSensorSnapshot() {
+    return this._sensors.map((s, idx) => {
+      const val = this._currentValues[idx];
+      return {
+        name: s.name,
+        adr: s.adr,
+        dim: s.dim,
+        value: s.dim === 1 ? [val] : Array.from(val),
+      };
+    });
   }
 
   /**
@@ -199,7 +295,7 @@ export class SensorMonitor {
 
   dispose() {
     if (this._raf) {
-      cancelAnimationFrame(this._raf);
+      if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(this._raf);
       this._raf = null;
     }
     if (this._panel && this._panel.parentElement) {
@@ -210,7 +306,7 @@ export class SensorMonitor {
   // ── Internal Helpers ────────────────────────────────────────
 
   _scheduleUpdate() {
-    if (this._raf) return;
+    if (this._raf || typeof requestAnimationFrame !== 'function') return;
     this._raf = requestAnimationFrame((timestamp) => {
       this._raf = null;
       // Throttle DOM text updates to ~30fps (every 33ms)

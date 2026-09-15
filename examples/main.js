@@ -328,6 +328,12 @@ export class RoboSpaceDemo {
     this.sensorMonitor = new SensorMonitor(this.container);
     this.sensorMonitor.setLivePlotter(this.livePlotter);
 
+    const camBtn = document.getElementById('camera-toggle-button');
+    if (camBtn) this.cameraViewer.setToggleButton(camBtn);
+
+    const sensorBtn = document.getElementById('sensor-toggle-button');
+    if (sensorBtn) this.sensorMonitor.setToggleButton(sensorBtn);
+
     // versioned() is passed in because ParentBridge lazily imports sceneWriter /
     // robotPacks for APPLY_SCENE, and a lazy import without the ?v=N serves stale.
     this.parentBridge = new ParentBridge(this, { versioned });
@@ -644,6 +650,28 @@ export class RoboSpaceDemo {
     }
   }
 
+  _onSceneLoaded() {
+    // Update plotter labels from joint names
+    if (this.livePlotter && this.model) {
+      const decoder = new TextDecoder('utf-8');
+      const labels = [];
+      for (let i = 0; i < Math.min(this.model.njnt, 8); i++) {
+        const addr = this.model.name_jntadr[i];
+        const raw  = decoder.decode(this.model.names.subarray(addr));
+        labels.push(raw.split('\0')[0] || `j${i}`);
+      }
+      this.livePlotter.setLabels(labels);
+    }
+
+    // Update camera viewer and sensor monitor
+    if (this.cameraViewer) {
+      this.cameraViewer.onModelChanged(this.model, this.simulation);
+    }
+    if (this.sensorMonitor) {
+      this.sensorMonitor.onModelChanged(this.model, this.simulation);
+    }
+  }
+
   /**
    * @param {string} [sceneOverride] Scene to load. Defaults to params.scene *as it
    *   is now*, captured here rather than read inside the queued job below.
@@ -666,6 +694,8 @@ export class RoboSpaceDemo {
         this.params.scene = scene;    // source of truth now matches what loaded
         this._renderFaults = 0;       // a good scene earns a clean slate
         this.simClock.reset(0);       // a new model means a new clock
+        this.mujoco_time = 0;
+        this._releaseFrameWaiters();
       } catch (error) {
         this.showError(`Failed to load scene "${scene}": ${this.formatError(error)}`);
         if (this.setSimStatus) this.setSimStatus('error');
@@ -677,25 +707,7 @@ export class RoboSpaceDemo {
         await this.updatePythonEnvironment();
       }
 
-      // Update plotter labels from joint names
-      if (this.livePlotter && this.model) {
-        const decoder = new TextDecoder('utf-8');
-        const labels = [];
-        for (let i = 0; i < Math.min(this.model.njnt, 8); i++) {
-          const addr = this.model.name_jntadr[i];
-          const raw  = decoder.decode(this.model.names.subarray(addr));
-          labels.push(raw.split('\0')[0] || `j${i}`);
-        }
-        this.livePlotter.setLabels(labels);
-      }
-
-      // Update camera viewer and sensor monitor
-      if (this.cameraViewer) {
-        this.cameraViewer.onModelChanged(this.model, this.simulation);
-      }
-      if (this.sensorMonitor) {
-        this.sensorMonitor.onModelChanged(this.model, this.simulation);
-      }
+      this._onSceneLoaded();
 
       // Camera reset — skipped when the parent bridge is restoring a saved camera
       if (!this.parentBridge?.suppressCameraReset) {
@@ -728,6 +740,7 @@ export class RoboSpaceDemo {
         [this.model, this.state, this.simulation, this.bodies, this.lights] =
           await loadSceneFromURL(mujoco, initialScene, this);
         this.clearError();
+        this._onSceneLoaded();
         this._markReady('scene');
       } catch (error) {
         this.showError(`Failed to initialize scene "${initialScene}": ${this.formatError(error)}`);

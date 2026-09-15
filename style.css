@@ -800,15 +800,13 @@ body {
     top: 76px;
     right: 18px;
     width: 320px;
-    background: rgba(20, 20, 26, 0.94);
+    background: transparent;
     border: 1px solid #2e2e36;
     border-radius: 10px;
     display: flex;
     flex-direction: column;
     z-index: 995;
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
     overflow: hidden;
     user-select: none;
 }
@@ -819,7 +817,9 @@ body {
     justify-content: space-between;
     padding: 7px 12px;
     border-bottom: 1px solid #2e2e36;
-    background: rgba(28, 28, 36, 0.9);
+    background: rgba(28, 28, 36, 0.95);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     cursor: grab;
     flex-shrink: 0;
 }
@@ -889,7 +889,8 @@ body {
     width: 100%;
     height: 220px;
     position: relative;
-    background: #000000;
+    background: transparent;
+    pointer-events: none;
     overflow: hidden;
 }
 
@@ -905,7 +906,9 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 5px 10px;
-    background: rgba(15, 15, 20, 0.85);
+    background: rgba(15, 15, 20, 0.95);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border-top: 1px solid rgba(46, 46, 54, 0.6);
     font-size: 10px;
     color: #94a3b8;
