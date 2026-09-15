@@ -53,6 +53,7 @@ export class CameraViewer {
   }
 
   show(cameraNameOrIndex) {
+    if (this._cameras.length === 0) return;
     if (cameraNameOrIndex !== undefined && cameraNameOrIndex !== null) {
       this.selectCamera(cameraNameOrIndex);
     }
@@ -119,25 +120,48 @@ export class CameraViewer {
       }
     }
 
-    // Always provide virtual cameras as fallbacks or auxiliary views
-    if (model) {
-      // Tool / Wrist Cam (looking down/forward at tool tip)
-      this._cameras.push({
-        id: 'virtual_tool',
-        name: 'Tool Cam (Virtual)',
-        isVirtual: true,
-        virtualType: 'tool',
-        fovy: 60,
-      });
+    // If no native cameras, check if the robot has an end-effector / gripper site or link.
+    // The camera is strictly an onboard robot point-of-view (what the robot sees), NOT an external observer.
+    if (this._cameras.length === 0 && model) {
+      let siteIdx = -1;
+      let siteName = '';
 
-      // Third-person / Tracking Cam
-      this._cameras.push({
-        id: 'virtual_track',
-        name: 'Tracking Cam (Virtual)',
-        isVirtual: true,
-        virtualType: 'track',
-        fovy: 50,
-      });
+      if (model.nsite > 0 && model.name_siteadr) {
+        const siteNames = readNames(model, model.name_siteadr, model.nsite, 'site');
+        const matchIdx = siteNames.findIndex((n) => /(attach|tool|wrist|grip|ee|tcp|pinch)/i.test(n));
+        if (matchIdx >= 0) {
+          siteIdx = matchIdx;
+          siteName = siteNames[matchIdx];
+        } else if (model.nsite === 1 && model.nbody > 1) {
+          siteIdx = 0;
+          siteName = siteNames[0] || 'attachment_site';
+        }
+      }
+
+      if (siteIdx >= 0) {
+        this._cameras.push({
+          id: 'gripper_pov',
+          name: `Gripper POV (${siteName})`,
+          isVirtual: true,
+          virtualType: 'gripper_pov',
+          siteId: siteIdx,
+          fovy: 75,
+        });
+      } else if (model.nbody > 1 && model.name_bodyadr) {
+        // Fallback to end-effector body link if named
+        const bodyNames = readNames(model, model.name_bodyadr, model.nbody, 'body');
+        const bodyMatchIdx = bodyNames.findIndex((n) => /(gripper|hand|wrist_3|wrist3|tool|ee|end_effector)/i.test(n));
+        if (bodyMatchIdx >= 0) {
+          this._cameras.push({
+            id: 'gripper_pov',
+            name: `Gripper POV (${bodyNames[bodyMatchIdx]})`,
+            isVirtual: true,
+            virtualType: 'gripper_pov',
+            bodyId: bodyMatchIdx,
+            fovy: 75,
+          });
+        }
+      }
     }
 
     // Default to first camera
@@ -367,40 +391,51 @@ export class CameraViewer {
   // ── Internal Helpers ────────────────────────────────────────
 
   _updateVirtualCamera(cam, simulation, model) {
-    this._threeCamera.matrixAutoUpdate = true;
-    this._threeCamera.fov = cam.fovy || 50;
+    this._threeCamera.fov = cam.fovy || 75;
 
-    if (cam.virtualType === 'tool') {
-      const targetPos = new THREE.Vector3(0, 0.5, 0);
+    let px = 0, py = 0, pz = 0;
+    let m = null;
 
-      // Resolve end-effector or tool attachment site
-      let siteIdx = -1;
-      if (model.nsite > 0 && model.name_siteadr) {
-        const siteNames = readNames(model, model.name_siteadr, model.nsite, 'site');
-        siteIdx = siteNames.findIndex((n) => /(attach|tool|wrist|grip|ee|tcp|pinch)/i.test(n));
-        if (siteIdx < 0) siteIdx = model.nsite - 1;
-      }
-
-      if (siteIdx >= 0 && simulation.site_xpos) {
-        getPosition(simulation.site_xpos, siteIdx, targetPos, true);
-      } else if (model.nbody > 1 && simulation.xpos) {
-        getPosition(simulation.xpos, model.nbody - 1, targetPos, true);
-      }
-
-      // Position tool camera elevated and angled toward workpiece
-      this._threeCamera.position.set(targetPos.x, targetPos.y + 0.35, targetPos.z + 0.25);
-      this._threeCamera.lookAt(targetPos);
-    } else {
-      // Tracking camera: elevated third-person shot centered on robot base
-      const basePos = new THREE.Vector3(0, 0, 0);
-      if (model.nbody > 1 && simulation.xpos) {
-        getPosition(simulation.xpos, 1, basePos, true);
-      }
-      this._threeCamera.position.set(basePos.x + 1.2, basePos.y + 0.8, basePos.z + 1.2);
-      this._threeCamera.lookAt(basePos.x, basePos.y + 0.35, basePos.z);
+    if (cam.siteId !== undefined && simulation.site_xpos && simulation.site_xmat) {
+      const siteId = cam.siteId;
+      px = simulation.site_xpos[3 * siteId + 0];
+      py = simulation.site_xpos[3 * siteId + 1];
+      pz = simulation.site_xpos[3 * siteId + 2];
+      m = simulation.site_xmat.subarray(9 * siteId, 9 * siteId + 9);
+    } else if (cam.bodyId !== undefined && simulation.xpos && simulation.xmat) {
+      const bodyId = cam.bodyId;
+      px = simulation.xpos[3 * bodyId + 0];
+      py = simulation.xpos[3 * bodyId + 1];
+      pz = simulation.xpos[3 * bodyId + 2];
+      m = simulation.xmat.subarray(9 * bodyId, 9 * bodyId + 9);
     }
-    this._threeCamera.updateMatrix();
-    this._threeCamera.updateMatrixWorld();
+
+    if (m) {
+      // In MuJoCo, orientation matrix m is 3x3 row-major.
+      // Column 2 (m[2], m[5], m[8]) is the tool approach/pointing direction.
+      // In Three.js, camera optical axis points along -Z:
+      //   z_cam_mujoco = -Column 2 = (-m[2], -m[5], -m[8])
+      // Camera up (+Y) is Column 1:
+      //   y_cam_mujoco = Column 1 = (m[1], m[4], m[7])
+      // Camera right (+X) is -Column 0:
+      //   x_cam_mujoco = (-m[0], -m[3], -m[6])
+      //
+      // Applying coordinate swizzle S (MuJoCo [x, y, z] -> Three.js [x, z, -y]):
+      // Row 0: -m[0],  m[1], -m[2],  px
+      // Row 1: -m[6],  m[7], -m[8],  pz
+      // Row 2:  m[3], -m[4],  m[5], -py
+      // Row 3:  0,     0,     0,     1
+      this._matrix4.set(
+        -m[0],  m[1], -m[2],  px,
+        -m[6],  m[7], -m[8],  pz,
+         m[3], -m[4],  m[5], -py,
+         0,     0,     0,     1
+      );
+
+      this._threeCamera.matrix.copy(this._matrix4);
+      this._threeCamera.matrixWorld.copy(this._matrix4);
+      this._threeCamera.matrixAutoUpdate = false;
+    }
   }
 
   _createPanel() {
@@ -466,8 +501,18 @@ export class CameraViewer {
 
   _updateButtonLabel() {
     if (!this._toggleBtn) return;
-    const count = this._cameras.filter((c) => !c.isVirtual).length;
-    this._toggleBtn.textContent = count > 0 ? `📷 Camera (${count})` : '📷 Camera';
+    if (this._cameras.length === 0) {
+      this._toggleBtn.style.display = 'none';
+      if (this._visible) this.hide();
+      return;
+    }
+    this._toggleBtn.style.display = '';
+    const nativeCount = this._cameras.filter((c) => !c.isVirtual).length;
+    if (nativeCount > 0) {
+      this._toggleBtn.textContent = nativeCount > 1 ? `📷 Camera (${nativeCount})` : '📷 Camera';
+    } else {
+      this._toggleBtn.textContent = '📷 Camera (POV)';
+    }
   }
 
   _updateStatus() {

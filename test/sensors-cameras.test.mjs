@@ -264,19 +264,51 @@ console.log('\nmodel with camera and sensor compilation & decoding');
   check(Math.abs(snapMap['joint2_vel'] - (-1.25)) < 1e-5, 'joint2_vel sampled correctly');
   check(Math.abs(snapMap['motor1_ctrl'] - 3.5) < 1e-5, 'motor1_ctrl sampled correctly');
 
-  // CameraViewer virtual cameras & toggle
+  // CameraViewer onboard POV & conditional hiding
   const camViewer = new CameraViewer(container);
   camViewer.setToggleButton(camBtn);
-  check(!camViewer.visible, 'camera viewer starts hidden');
+
+  // Model without cameras or end-effector:
+  camViewer.onModelChanged(modelNoSensors, simNoSensors);
+  check(camViewer.cameras.length === 0, 'no cameras created when model lacks cameras and end-effector');
+  check(camBtn.style.display === 'none', 'camera button is hidden when no camera or end-effector exists');
+  camViewer.show();
+  check(!camViewer.visible, 'show() does not open viewer when cameras.length is 0');
+
+  console.log('\nCameraViewer Gripper POV on model with attachment_site');
+  const testSceneArm = `
+<mujoco model="arm_with_gripper">
+  <worldbody>
+    <light pos="0 0 3"/>
+    <geom name="floor" type="plane" size="1 1 0.1"/>
+    <body name="base" pos="0 0 0">
+      <body name="wrist_link" pos="0 0 0.5">
+        <joint name="wrist_joint" type="hinge" axis="0 0 1"/>
+        <geom type="box" size="0.05 0.05 0.05"/>
+        <site name="attachment_site" pos="0 0.1 0"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+`;
+  mujoco.FS.writeFile('/working_test/arm_gripper.xml', testSceneArm);
+  const modelArm = compileModel(mujoco, '/working_test/arm_gripper.xml');
+  const stateArm = new mujoco.State(modelArm);
+  const simArm = new mujoco.Simulation(modelArm, stateArm);
+  simArm.forward();
+
+  camViewer.onModelChanged(modelArm, simArm);
+  check(camViewer.cameras.length === 1, 'exactly 1 onboard camera created (Gripper POV)');
+  check(camViewer.cameras[0].id === 'gripper_pov', 'camera id is gripper_pov');
+  check(camViewer.cameras[0].name.includes('Gripper POV'), 'camera name is Gripper POV');
+  check(camBtn.style.display === '', 'camera button is displayed when Gripper POV exists');
+  check(camBtn.textContent.includes('POV'), 'button label shows POV');
+
   camBtn.click();
   check(camViewer.visible, 'clicking camera button toggles visible');
   check(camBtn.classList.contains('active'), 'camera button gets active class');
   camBtn.click();
   check(!camViewer.visible, 'clicking camera button again hides it');
-
-  camViewer.onModelChanged(modelNoSensors, simNoSensors);
-  check(camViewer.cameras.length === 2, 'virtual fallback cameras created when ncam is 0');
-  check(camViewer.cameras[0].isVirtual && camViewer.cameras[1].isVirtual, 'both cameras are virtual fallbacks');
 
   console.log('\nCameraViewer render scissor & viewport coordinate calculations');
   camViewer.show();
@@ -312,7 +344,7 @@ console.log('\nmodel with camera and sensor compilation & decoding');
     origRender(s, c);
   };
 
-  camViewer.render(mockRenderer, mockScene, simNoSensors, modelNoSensors);
+  camViewer.render(mockRenderer, mockScene, simArm, modelArm);
 
   // Verify scissor test was enabled then disabled
   check(calls.some((c) => c[0] === 'setScissorTest' && c[1] === true), 'scissor test enabled for PiP');

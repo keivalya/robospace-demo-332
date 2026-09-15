@@ -1566,6 +1566,8 @@ def get_camera_info(camera_id=0):
 
 def show_camera(camera_id=None):
     """Open the camera PiP window in the viewport."""
+    if window.getNumCameras() == 0:
+        raise RuntimeError('No camera or end-effector available on this robot model.')
     window.showCameraViewer(camera_id)
 
 def hide_camera():
