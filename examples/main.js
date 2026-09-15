@@ -7,7 +7,6 @@ import load_mujoco from '../dist/mujoco_wasm.js';
 import { FileUploadManager } from './utils/FileUploadManager.js';
 import { LivePlotter } from './utils/LivePlotter.js';
 import { CameraViewer } from './utils/CameraViewer.js';
-import { SensorMonitor } from './utils/SensorMonitor.js';
 import { ParentBridge } from './utils/ParentBridge.js';
 import { mujocoLogHooks } from './utils/mujocoLog.js';
 import { resolveInitialScene, readStoredScene, forgetStoredScene, DEFAULT_SCENE } from './utils/initialScene.js';
@@ -325,14 +324,9 @@ export class RoboSpaceDemo {
 
     this.livePlotter = new LivePlotter();
     this.cameraViewer = new CameraViewer(this.container);
-    this.sensorMonitor = new SensorMonitor(this.container);
-    this.sensorMonitor.setLivePlotter(this.livePlotter);
 
     const camBtn = document.getElementById('camera-toggle-button');
     if (camBtn) this.cameraViewer.setToggleButton(camBtn);
-
-    const sensorBtn = document.getElementById('sensor-toggle-button');
-    if (sensorBtn) this.sensorMonitor.setToggleButton(sensorBtn);
 
     // versioned() is passed in because ParentBridge lazily imports sceneWriter /
     // robotPacks for APPLY_SCENE, and a lazy import without the ?v=N serves stale.
@@ -485,12 +479,6 @@ export class RoboSpaceDemo {
     const camBtn = document.getElementById('camera-toggle-button');
     if (this.cameraViewer && camBtn) {
       this.cameraViewer.setToggleButton(camBtn);
-    }
-
-    // Sensor monitor toggle (floating overlay button)
-    const sensorBtn = document.getElementById('sensor-toggle-button');
-    if (this.sensorMonitor && sensorBtn) {
-      this.sensorMonitor.setToggleButton(sensorBtn);
     }
 
     // Pause / Play toggle
@@ -663,12 +651,9 @@ export class RoboSpaceDemo {
       this.livePlotter.setLabels(labels);
     }
 
-    // Update camera viewer and sensor monitor
+    // Update camera viewer
     if (this.cameraViewer) {
       this.cameraViewer.onModelChanged(this.model, this.simulation);
-    }
-    if (this.sensorMonitor) {
-      this.sensorMonitor.onModelChanged(this.model, this.simulation);
     }
   }
 
@@ -994,9 +979,6 @@ export class RoboSpaceDemo {
       if (this.cameraViewer) {
         this.cameraViewer.render(this.renderer, this.scene, this.simulation, this.model);
       }
-      if (this.sensorMonitor) {
-        this.sensorMonitor.sample(this.simulation, this.model);
-      }
       this._releaseFrameWaiters();
       return;
     }
@@ -1047,8 +1029,8 @@ export class RoboSpaceDemo {
         this.simulation.step();
         this.simClock.advance(1, timestep);
 
-        // Feed live plotter (first 8 qpos values) unless a sensor is being plotted
-        if (this.livePlotter && (!this.sensorMonitor || this.sensorMonitor._plottedSensorIndex < 0)) {
+        // Feed live plotter (first 8 qpos values)
+        if (this.livePlotter) {
           this.livePlotter.sample(Array.from(this.simulation.qpos).slice(0, 8));
         }
 
@@ -1098,9 +1080,6 @@ export class RoboSpaceDemo {
     this.renderer.render(this.scene, this.camera);
     if (this.cameraViewer) {
       this.cameraViewer.render(this.renderer, this.scene, this.simulation, this.model);
-    }
-    if (this.sensorMonitor) {
-      this.sensorMonitor.sample(this.simulation, this.model);
     }
     this._releaseFrameWaiters();
   }

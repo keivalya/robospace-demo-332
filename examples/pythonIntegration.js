@@ -462,9 +462,6 @@ export async function initializePythonEnvironment(demo) {
         window.getSensors = () => {
             const m = demo.model;
             if (!m || !demo.simulation) return [];
-            if (demo.sensorMonitor && demo.sensorMonitor.sensors.length > 0) {
-                return demo.sensorMonitor.getSensorSnapshot();
-            }
             if (m.nsensor > 0 && demo.simulation.sensordata) {
                 const data = demo.simulation.sensordata;
                 const names = readNames(m, m.name_sensoradr, m.nsensor, 'sensor');
@@ -545,14 +542,6 @@ export async function initializePythonEnvironment(demo) {
 
         window.hideCameraViewer = () => {
             if (demo.cameraViewer) demo.cameraViewer.hide();
-        };
-
-        window.showSensorMonitor = () => {
-            if (demo.sensorMonitor) demo.sensorMonitor.show();
-        };
-
-        window.hideSensorMonitor = () => {
-            if (demo.sensorMonitor) demo.sensorMonitor.hide();
         };
 
         // Simplified sensor data with proper checks
@@ -1526,7 +1515,7 @@ def help_api():
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),
         ('time', ['get_time', 'get_steps', 'dt', 'is_paused']),
         ('scenes (these DO need await)', ['list_robots', 'load_robot', 'load_scene']),
-        ('sensors', ['sensor', 'sensors', 'sensor_names', 'sensor_info', 'show_sensors', 'hide_sensors', 'get_sensor_data', 'print_sensors']),
+        ('sensors', ['sensor', 'sensors', 'sensor_names', 'sensor_info', 'get_sensor_data', 'print_sensors']),
         ('cameras', ['camera_names', 'camera_info', 'camera_image', 'show_camera', 'hide_camera', 'get_camera_names', 'get_camera_info', 'print_cameras']),
     ]
     g = globals()
@@ -1623,14 +1612,6 @@ def sensor_info(name_or_id):
             return s
     listing = ', '.join(names) if names else '(none)'
     raise ValueError(f"no sensor named {name_or_id!r}. Available: {listing}")
-
-def show_sensors():
-    """Open the Sensor Monitor panel in the viewport."""
-    window.showSensorMonitor()
-
-def hide_sensors():
-    """Hide the Sensor Monitor panel."""
-    window.hideSensorMonitor()
 
 def print_sensors():
     """Print all available sensors with live readings."""

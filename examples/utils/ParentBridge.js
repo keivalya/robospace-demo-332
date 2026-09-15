@@ -356,17 +356,6 @@ export class ParentBridge {
         }, data.id);
         break;
       }
-      case 'TOGGLE_SENSORS': {
-        const { visible } = data.payload || {};
-        if (visible === true) this.demo.sensorMonitor?.show();
-        else if (visible === false) this.demo.sensorMonitor?.hide();
-        else this.demo.sensorMonitor?.toggle();
-        this._send('SENSORS_STATUS', {
-          visible: !!this.demo.sensorMonitor?.visible,
-          sensors: this.demo.sensorMonitor?.sensors?.map((s) => ({ name: s.name, type: s.typeName, unit: s.unit })) || [],
-        }, data.id);
-        break;
-      }
       default:
         // Unknown but well-formed message — ignore.
         break;

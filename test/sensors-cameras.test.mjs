@@ -7,7 +7,6 @@ import load_mujoco from '../dist/mujoco_wasm.js';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel, readNames } from '../examples/mujocoUtils.js';
 import { readModelStats } from '../examples/utils/sceneWriter.js';
-import { SensorMonitor, SENSOR_TYPES } from '../examples/utils/SensorMonitor.js';
 import { CameraViewer } from '../examples/utils/CameraViewer.js';
 
 function createMockDom() {
@@ -128,15 +127,6 @@ console.log('camera coordinate transformation math');
   eq(zCamT, [-1, 0, 0], 'Three.js camera looking dir -Z corresponds to +X in Three.js coordinates');
 }
 
-console.log('\nsensor type metadata completeness');
-{
-  check(SENSOR_TYPES[0].type === 'touch', 'type 0 is touch');
-  check(SENSOR_TYPES[1].type === 'accelerometer' && SENSOR_TYPES[1].unit === 'm/s²', 'type 1 is accelerometer with m/s²');
-  check(SENSOR_TYPES[3].type === 'gyro' && SENSOR_TYPES[3].unit === 'rad/s', 'type 3 is gyro with rad/s');
-  check(SENSOR_TYPES[4].type === 'force' && SENSOR_TYPES[4].unit === 'N', 'type 4 is force with N');
-  check(SENSOR_TYPES[7].type === 'rangefinder' && SENSOR_TYPES[7].unit === 'm', 'type 7 is rangefinder with m');
-}
-
 console.log('\nmodel with camera and sensor compilation & decoding');
 {
   const mujoco = await load_mujoco(mujocoLogHooks);
@@ -201,7 +191,7 @@ console.log('\nmodel with camera and sensor compilation & decoding');
   check(simulation.cam_xpos.length === 6, 'cam_xpos has 6 coordinates (2 cameras x 3)');
   check(simulation.cam_xmat.length === 18, 'cam_xmat has 18 coordinates (2 cameras x 9)');
 
-  console.log('\nmodel without sensors (telemetry fallback & toggle buttons)');
+  console.log('\nmodel without cameras or end-effector (camera button conditional hiding)');
   const testSceneNoSensors = `
 <mujoco model="no_sensors_robot">
   <worldbody>
@@ -231,38 +221,7 @@ console.log('\nmodel with camera and sensor compilation & decoding');
   check(modelNoSensors.ncam === 0, 'model has 0 native cameras');
 
   const container = globalThis.document.createElement('div');
-  const sensorMon = new SensorMonitor(container);
   const camBtn = globalThis.document.createElement('button');
-  const sensorBtn = globalThis.document.createElement('button');
-
-  sensorMon.setToggleButton(sensorBtn);
-  check(!sensorMon.visible, 'sensor monitor starts hidden');
-  check(!sensorBtn.classList.contains('active'), 'sensor button starts inactive');
-
-  sensorBtn.click();
-  check(sensorMon.visible, 'clicking button toggles sensor monitor visible');
-  check(sensorBtn.classList.contains('active'), 'button gets active class when visible');
-
-  sensorBtn.click();
-  check(!sensorMon.visible, 'clicking button again hides sensor monitor');
-  check(!sensorBtn.classList.contains('active'), 'button loses active class when hidden');
-
-  // onModelChanged with 0 sensors should populate virtual telemetry sensors
-  sensorMon.onModelChanged(modelNoSensors, simNoSensors);
-  check(sensorMon.sensors.length === 6, 'virtual sensors created: 2 joint pos + 2 joint vel + 2 actuator ctrl');
-  check(sensorBtn.textContent.includes('6'), 'button label updated with sensor count');
-
-  // Verify telemetry sampling
-  simNoSensors.qpos[0] = 0.42;
-  simNoSensors.qvel[1] = -1.25;
-  simNoSensors.ctrl[0] = 3.5;
-  sensorMon.sample(simNoSensors, modelNoSensors);
-
-  const snapshot = sensorMon.getSensorSnapshot();
-  const snapMap = Object.fromEntries(snapshot.map((s) => [s.name, s.value[0]]));
-  check(Math.abs(snapMap['joint1_pos'] - 0.42) < 1e-5, 'joint1_pos sampled correctly');
-  check(Math.abs(snapMap['joint2_vel'] - (-1.25)) < 1e-5, 'joint2_vel sampled correctly');
-  check(Math.abs(snapMap['motor1_ctrl'] - 3.5) < 1e-5, 'motor1_ctrl sampled correctly');
 
   // CameraViewer onboard POV & conditional hiding
   const camViewer = new CameraViewer(container);
