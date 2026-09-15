@@ -7,7 +7,7 @@
 // capture for Python scripts and screenshots.
 
 import * as THREE from 'three';
-import { readNames } from '../mujocoUtils.js';
+import { readNames, getPosition } from '../mujocoUtils.js';
 
 export class CameraViewer {
   constructor(containerEl) {
@@ -202,13 +202,15 @@ export class CameraViewer {
     const canvas = renderer.domElement;
     const canvasRect = canvas.getBoundingClientRect();
     const vpRect = this._viewportEl.getBoundingClientRect();
-    const pixelRatio = renderer.getPixelRatio();
 
-    // Calculate scissor rect in WebGL framebuffer coordinates (Y from bottom)
-    const x = Math.round((vpRect.left - canvasRect.left) * pixelRatio);
-    const y = Math.round((canvasRect.bottom - vpRect.bottom) * pixelRatio);
-    const width = Math.round(vpRect.width * pixelRatio);
-    const height = Math.round(vpRect.height * pixelRatio);
+    // In Three.js, setScissor and setViewport accept logical CSS units.
+    // Three.js internally multiplies them by _pixelRatio:
+    //   _currentViewport.copy(_viewport).multiplyScalar(_pixelRatio).floor()
+    // Do NOT multiply by pixelRatio here, or coordinates will be scaled by pixelRatio^2!
+    const x = Math.round(vpRect.left - canvasRect.left);
+    const y = Math.round(canvasRect.bottom - vpRect.bottom);
+    const width = Math.round(vpRect.width);
+    const height = Math.round(vpRect.height);
 
     if (width <= 2 || height <= 2) return;
 
@@ -217,10 +219,20 @@ export class CameraViewer {
 
     this.updateCamera(simulation, model);
 
-    // Save renderer state
+    // Save renderer's original CSS size for restoring the primary viewport
     renderer.getSize(this._tempVec2);
-    const fullW = Math.round(this._tempVec2.x * pixelRatio);
-    const fullH = Math.round(this._tempVec2.y * pixelRatio);
+    const fullW = this._tempVec2.x;
+    const fullH = this._tempVec2.y;
+
+    // Temporarily suppress scene reflectors to avoid reflection pass overhead
+    // and prevent Reflector from altering render targets or viewport state
+    const hiddenReflectors = [];
+    scene.traverse((obj) => {
+      if (obj.isReflector && obj.visible) {
+        hiddenReflectors.push(obj);
+        obj.visible = false;
+      }
+    });
 
     // Scissor & Viewport render
     renderer.setScissorTest(true);
@@ -230,9 +242,15 @@ export class CameraViewer {
     renderer.clear(true, true, true);
     renderer.render(scene, this._threeCamera);
 
-    // Restore primary viewport
+    // Restore reflector visibility
+    for (let i = 0; i < hiddenReflectors.length; i++) {
+      hiddenReflectors[i].visible = true;
+    }
+
+    // Restore primary viewport, scissor, and scissor test
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, fullW, fullH);
+    renderer.setScissor(0, 0, fullW, fullH);
   }
 
   /**
@@ -268,7 +286,21 @@ export class CameraViewer {
     this._threeCamera.updateProjectionMatrix();
 
     this.updateCamera(simulation, model, camIdx);
+
+    // Temporarily suppress scene reflectors during capture pass
+    const hiddenReflectors = [];
+    scene.traverse((obj) => {
+      if (obj.isReflector && obj.visible) {
+        hiddenReflectors.push(obj);
+        obj.visible = false;
+      }
+    });
+
     renderer.render(scene, this._threeCamera);
+
+    for (let i = 0; i < hiddenReflectors.length; i++) {
+      hiddenReflectors[i].visible = true;
+    }
 
     const rawPixels = new Uint8Array(width * height * 4);
     renderer.readRenderTargetPixels(this._offscreenTarget, 0, 0, width, height, rawPixels);
@@ -339,37 +371,33 @@ export class CameraViewer {
     this._threeCamera.fov = cam.fovy || 50;
 
     if (cam.virtualType === 'tool') {
-      // Find end-effector site or last body
-      let targetPos = new THREE.Vector3(0, 0.5, 0);
+      const targetPos = new THREE.Vector3(0, 0.5, 0);
 
-      if (model.nsite > 0) {
-        // Use attachment_site or first site
-        const sX = simulation.site_xpos[0];
-        const sY = simulation.site_xpos[1];
-        const sZ = simulation.site_xpos[2];
-        targetPos.set(sX, sZ, -sY);
-      } else if (model.nbody > 1) {
-        // Use last link
-        const b = model.nbody - 1;
-        const bX = simulation.xpos[3 * b + 0];
-        const bY = simulation.xpos[3 * b + 1];
-        const bZ = simulation.xpos[3 * b + 2];
-        targetPos.set(bX, bZ, -bY);
+      // Resolve end-effector or tool attachment site
+      let siteIdx = -1;
+      if (model.nsite > 0 && model.name_siteadr) {
+        const siteNames = readNames(model, model.name_siteadr, model.nsite, 'site');
+        siteIdx = siteNames.findIndex((n) => /(attach|tool|wrist|grip|ee|tcp|pinch)/i.test(n));
+        if (siteIdx < 0) siteIdx = model.nsite - 1;
       }
 
-      this._threeCamera.position.copy(targetPos).add(new THREE.Vector3(0, 0.25, 0.1));
+      if (siteIdx >= 0 && simulation.site_xpos) {
+        getPosition(simulation.site_xpos, siteIdx, targetPos, true);
+      } else if (model.nbody > 1 && simulation.xpos) {
+        getPosition(simulation.xpos, model.nbody - 1, targetPos, true);
+      }
+
+      // Position tool camera elevated and angled toward workpiece
+      this._threeCamera.position.set(targetPos.x, targetPos.y + 0.35, targetPos.z + 0.25);
       this._threeCamera.lookAt(targetPos);
     } else {
-      // Tracking camera: behind and above body 1 (base)
-      let basePos = new THREE.Vector3(0, 0, 0);
-      if (model.nbody > 1) {
-        const bX = simulation.xpos[3 + 0];
-        const bY = simulation.xpos[3 + 1];
-        const bZ = simulation.xpos[3 + 2];
-        basePos.set(bX, bZ, -bY);
+      // Tracking camera: elevated third-person shot centered on robot base
+      const basePos = new THREE.Vector3(0, 0, 0);
+      if (model.nbody > 1 && simulation.xpos) {
+        getPosition(simulation.xpos, 1, basePos, true);
       }
       this._threeCamera.position.set(basePos.x + 1.2, basePos.y + 0.8, basePos.z + 1.2);
-      this._threeCamera.lookAt(basePos.x, basePos.y + 0.4, basePos.z);
+      this._threeCamera.lookAt(basePos.x, basePos.y + 0.35, basePos.z);
     }
     this._threeCamera.updateMatrix();
     this._threeCamera.updateMatrixWorld();

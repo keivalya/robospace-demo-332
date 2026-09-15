@@ -3,9 +3,30 @@
 // but they live in a module whose import graph pulls it in (and Reflector.js
 // destructures named exports from it).
 class Stub {
-  constructor() {}
-  set() { return this; }
+  constructor() {
+    this.matrix = this;
+    this.matrixWorld = this;
+    this.position = this;
+    this.up = this;
+    this.x = 0;
+    this.y = 0;
+    this.z = 0;
+  }
+  set(x, y, z, w) {
+    if (x !== undefined) this.x = x;
+    if (y !== undefined) this.y = y;
+    if (z !== undefined) this.z = z;
+    if (w !== undefined) this.w = w;
+    return this;
+  }
   clone() { return new Stub(); }
+  copy() { return this; }
+  add() { return this; }
+  multiply() { return this; }
+  updateProjectionMatrix() { return this; }
+  updateMatrix() { return this; }
+  updateMatrixWorld() { return this; }
+  lookAt() { return this; }
 }
 export default Stub;
 

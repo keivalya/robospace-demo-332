@@ -901,6 +901,30 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.camera-pip-crosshair::before,
+.camera-pip-crosshair::after {
+    content: '';
+    position: absolute;
+    background: rgba(255, 255, 255, 0.25);
+    pointer-events: none;
+}
+
+.camera-pip-crosshair::before {
+    top: 50%;
+    left: calc(50% - 10px);
+    width: 20px;
+    height: 1px;
+    transform: translateY(-50%);
+}
+
+.camera-pip-crosshair::after {
+    left: 50%;
+    top: calc(50% - 10px);
+    width: 1px;
+    height: 20px;
+    transform: translateX(-50%);
+}
+
 .camera-pip-footer {
     display: flex;
     align-items: center;

@@ -277,6 +277,67 @@ console.log('\nmodel with camera and sensor compilation & decoding');
   camViewer.onModelChanged(modelNoSensors, simNoSensors);
   check(camViewer.cameras.length === 2, 'virtual fallback cameras created when ncam is 0');
   check(camViewer.cameras[0].isVirtual && camViewer.cameras[1].isVirtual, 'both cameras are virtual fallbacks');
+
+  console.log('\nCameraViewer render scissor & viewport coordinate calculations');
+  camViewer.show();
+  check(camViewer.visible, 'camera viewer visible after show()');
+
+  const calls = [];
+  const mockRenderer = {
+    domElement: {
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600 }),
+    },
+    getPixelRatio: () => 2, // Retina display 2x DPI
+    getSize: (v) => v.set(800, 600),
+    setScissorTest: (val) => { calls.push(['setScissorTest', val]); },
+    setScissor: (x, y, w, h) => { calls.push(['setScissor', x, y, w, h]); },
+    setViewport: (x, y, w, h) => { calls.push(['setViewport', x, y, w, h]); },
+    clear: (color, depth, stencil) => { calls.push(['clear', color, depth, stencil]); },
+    render: (s, c) => { calls.push(['render', s, c]); },
+  };
+
+  const reflectorObj = { isReflector: true, visible: true };
+  let reflectorWasHiddenDuringRender = false;
+  const mockScene = {
+    traverse: (fn) => {
+      fn(reflectorObj);
+    },
+  };
+  // Hook render to verify reflector is hidden when sub-camera draws
+  const origRender = mockRenderer.render;
+  mockRenderer.render = (s, c) => {
+    if (reflectorObj.visible === false) {
+      reflectorWasHiddenDuringRender = true;
+    }
+    origRender(s, c);
+  };
+
+  camViewer.render(mockRenderer, mockScene, simNoSensors, modelNoSensors);
+
+  // Verify scissor test was enabled then disabled
+  check(calls.some((c) => c[0] === 'setScissorTest' && c[1] === true), 'scissor test enabled for PiP');
+  check(calls[calls.length - 3][0] === 'setScissorTest' && calls[calls.length - 3][1] === false, 'scissor test disabled on restore');
+
+  // Verify coordinates are unscaled CSS coordinates (NOT pre-multiplied by pixelRatio=2)
+  const scissorCall = calls.find((c) => c[0] === 'setScissor');
+  check(scissorCall !== undefined, 'setScissor was called');
+  // mockDom viewportEl width=300, height=200
+  eq(scissorCall[3], 300, 'scissor width is CSS logical 300px (not double-scaled to 600px)');
+  eq(scissorCall[4], 200, 'scissor height is CSS logical 200px (not double-scaled to 400px)');
+
+  const viewportCall = calls.find((c) => c[0] === 'setViewport');
+  eq(viewportCall[3], 300, 'viewport width is CSS logical 300px (not double-scaled to 600px)');
+  eq(viewportCall[4], 200, 'viewport height is CSS logical 200px (not double-scaled to 400px)');
+
+  // Verify restore viewport and scissor match original CSS size (800x600, not double-scaled)
+  const restoreVpCall = calls[calls.length - 2];
+  eq(restoreVpCall, ['setViewport', 0, 0, 800, 600], 'primary viewport restored to 800x600 CSS dimensions');
+  const restoreScissorCall = calls[calls.length - 1];
+  eq(restoreScissorCall, ['setScissor', 0, 0, 800, 600], 'primary scissor restored to 800x600 CSS dimensions');
+
+  // Verify reflector isolation
+  check(reflectorWasHiddenDuringRender, 'reflector was hidden during PiP render to prevent state corruption');
+  check(reflectorObj.visible === true, 'reflector visibility was restored after PiP render');
 }
 
 if (failures > 0) {
