@@ -832,5 +832,44 @@ console.log('\nsnapshot v2 — apply');
     'a mismatched saved state degrades to the home pose rather than qpos0');
 }
 
+console.log('\nchallenge script persistence & lifecycle');
+{
+  const { bridge, demo } = newBridge();
+  demo.startChallenge = () => true;
+
+  let currentScript = 'print("Moving UR5e arm to target [0.4, 0.0, 0.25]...")';
+  globalThis.window = globalThis.window || {};
+  globalThis.window.getPythonScript = () => currentScript;
+  globalThis.window.setPythonScript = (s) => { currentScript = s; };
+
+  // Case 1: Brand new project -> START_CHALLENGE sets starter code and emits dirty
+  deliver('NEW_PROJECT', { projectId: 'p1' });
+  const id1 = deliver('START_CHALLENGE', { challengeId: 'daily_waypoint_racer' });
+  const reply1 = repliesTo(id1)[0];
+  eq(reply1.type, 'CHALLENGE_STARTED', 'challenge started on fresh project');
+  check(currentScript.includes('Daily Challenge: Waypoint Racer'), 'fresh project gets challenge starter script');
+
+  // Case 2: Project loaded from snapshot with user code -> START_CHALLENGE does NOT overwrite user code
+  const userSolvedScript = '# User solved script\nrobot.move_to([0.35, 0.2, 0.45])\nrun(1.0)';
+  await bridge.applySnapshot({
+    schemaVersion: 2,
+    sceneName: 'universal_robots_ur5e',
+    entryXmlPath: 'universal_robots_ur5e/scene.xml',
+    script: userSolvedScript,
+  });
+  eq(currentScript, userSolvedScript, 'snapshot loaded user code into editor');
+
+  const id2 = deliver('START_CHALLENGE', { challengeId: 'daily_waypoint_racer' });
+  const reply2 = repliesTo(id2)[0];
+  eq(reply2.type, 'CHALLENGE_STARTED', 'challenge started on loaded project');
+  eq(currentScript, userSolvedScript, 'saved user script is NOT overwritten by challenge starter');
+
+  // Case 3: Explicit resetScript: true -> resets even when loaded from snapshot
+  const id3 = deliver('START_CHALLENGE', { challengeId: 'daily_waypoint_racer', resetScript: true });
+  const reply3 = repliesTo(id3)[0];
+  eq(reply3.type, 'CHALLENGE_STARTED', 'challenge started with resetScript');
+  check(currentScript.includes('Daily Challenge: Waypoint Racer'), 'starter script restored when resetScript is true');
+}
+
 console.log(`\n${failures} failure(s)`);
 process.exit(failures ? 1 : 0);

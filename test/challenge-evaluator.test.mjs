@@ -101,6 +101,12 @@ console.log('\nchallenge evaluator lifecycle & mock physics simulation');
   check(completeEvent.energyTotal > 0, 'energyTotal reported');
   check(completeEvent.qposTrajectory.length >= 1, 'trajectory history attached for ghost replay');
 
+  // Test resetRun restores running status and clears state
+  evaluator.resetRun();
+  check(evaluator.status === 'running', 'evaluator status reset to running after resetRun()');
+  check(evaluator.energyAccumulator === 0, 'energy accumulator reset to 0');
+  check(Object.keys(evaluator.challengeState).length === 0, 'challenge state cleared');
+
   // Stop evaluator cleans up
   evaluator.stop();
   check(evaluator.status === 'idle', 'evaluator idle after stop()');

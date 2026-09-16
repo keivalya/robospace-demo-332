@@ -1460,6 +1460,27 @@ class Robot:
     def joints(self):
         return self._joints
 
+    def move_to(self, pos, quat=None, seconds=1.0):
+        """Move the robot arm's end-effector to (pos, quat) using IK."""
+        return self.arm.move_to(pos, quat=quat, seconds=seconds)
+
+    def home(self, seconds=1.0):
+        """Return all arm joints to zero / home position."""
+        return self.arm.home(seconds=seconds)
+
+    def open_gripper(self, seconds=0.5):
+        return self.gripper.open(seconds=seconds)
+
+    def close_gripper(self, seconds=0.8):
+        return self.gripper.close(seconds=seconds)
+
+    def set_gripper(self, opening=1.0, seconds=0.8):
+        return self.gripper.set(opening=opening, seconds=seconds)
+
+    @property
+    def pos(self):
+        return self.arm.pos
+
     def wait(self, seconds=1.0):
         return run(seconds)
 
@@ -1743,6 +1764,9 @@ def print_sensors():
     
     print_cameras()
 
+# Default high-level robot instance for the current model
+robot = get_robot()
+
 print("RoboSpace")
 print("Getting started:")
 print("  await load_robot('franka_panda')      # only loading needs 'await'")
@@ -1921,9 +1945,24 @@ export function setupPythonIDE(demo) {
     const savedScript = localStorage.getItem(STORAGE_KEY_SCRIPT);
     const initialScript = savedScript !== null ? savedScript : DEFAULT_SCRIPT;
 
+    let _suppressDirty = false;
+    let _saveTimer = null;
+    const _onInput = () => {
+        if (_suppressDirty) return;
+        clearTimeout(_saveTimer);
+        _saveTimer = setTimeout(() => {
+            if (_currentMode === 'python') {
+                localStorage.setItem(STORAGE_KEY_SCRIPT, getCode());
+            }
+            window._roboDemo?.parentBridge?.emitDirty('script');
+        }, 500);
+    };
+
     let _editor = null;
     try {
-        _editor = createCodeEditor(editorHost, initialScript);
+        _editor = createCodeEditor(editorHost, initialScript, () => {
+            _onInput();
+        });
     } catch (e) {
         console.warn('CodeMirror failed to load, falling back to textarea:', e);
         editorHost.style.display = 'none';
@@ -1940,11 +1979,20 @@ export function setupPythonIDE(demo) {
         return _editor ? _editor.getValue() : codeArea.value;
     };
 
-    const setCode = (text) => {
+    const setCode = (text, options = {}) => {
+        const silent = options?.silent ?? false;
         if (_currentMode === 'blocks') return;
-        if (_editor) _editor.setValue(text);
-        else codeArea.value = text;
-        localStorage.setItem(STORAGE_KEY_SCRIPT, text);
+        if (silent) _suppressDirty = true;
+        try {
+            if (_editor) _editor.setValue(text);
+            else codeArea.value = text;
+            localStorage.setItem(STORAGE_KEY_SCRIPT, text);
+        } finally {
+            if (silent) _suppressDirty = false;
+        }
+        if (!silent) {
+            window._roboDemo?.parentBridge?.emitDirty('script');
+        }
     };
 
     // Expose getter/setter/reset for top-level controls (Save, Import, Reset)
@@ -1954,21 +2002,11 @@ export function setupPythonIDE(demo) {
         if (_currentMode === 'blocks') {
             _blockEditor?.loadDefaultBlocks();
         } else {
-            setCode(DEFAULT_SCRIPT);
+            const challengeStarter = window._roboDemo?.challengeEvaluator?.activeChallenge?.starterPython;
+            setCode(challengeStarter || DEFAULT_SCRIPT);
         }
     };
 
-    // Persist script on every keystroke (debounced 500 ms)
-    let _saveTimer = null;
-    const _onInput = () => {
-        clearTimeout(_saveTimer);
-        _saveTimer = setTimeout(() => {
-            if (_currentMode === 'python') {
-                localStorage.setItem(STORAGE_KEY_SCRIPT, getCode());
-            }
-            window._roboDemo?.parentBridge?.emitDirty('script');
-        }, 500);
-    };
     if (_editor) {
         editorHost.addEventListener('input', _onInput);
         _editor.addKeyHandler((e) => {
@@ -1986,7 +2024,7 @@ export function setupPythonIDE(demo) {
 
     let _blockEditor = null;
     if (blocklyHost) {
-        _blockEditor = new BlockEditor(blocklyHost, null);
+        _blockEditor = new BlockEditor(blocklyHost, () => _onInput());
         window._blockEditor = _blockEditor;
     }
 
@@ -2046,6 +2084,9 @@ export function setupPythonIDE(demo) {
         const code = getCode();
         if (!code.trim()) return;
 
+        localStorage.setItem(STORAGE_KEY_SCRIPT, code);
+        window._roboDemo?.parentBridge?.emitDirty('script');
+
         if (_interruptBuffer) _interruptBuffer[0] = 0;
         window._pythonShouldStop = false;
 
@@ -2053,6 +2094,7 @@ export function setupPythonIDE(demo) {
         window.pythonOutput("Running...\n");
         _setRunning(true);
         if (window.setSimStatus) window.setSimStatus('running');
+        demo.challengeEvaluator?.resetRun();
 
         try {
             try {

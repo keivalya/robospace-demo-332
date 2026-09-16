@@ -7,29 +7,39 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { python } from '@codemirror/lang-python';
 import { oneDark } from '@codemirror/theme-one-dark';
 
-export function createCodeEditor(hostEl, initialValue = '') {
+export function createCodeEditor(hostEl, initialValue = '', onChange = null) {
+    const extensions = [
+        lineNumbers(),
+        highlightActiveLine(),
+        history(),
+        python(),
+        oneDark,
+        keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
+        EditorView.theme({
+            '&': {
+                fontSize: '13px',
+                height: '100%',
+                background: '#1e1e1e',
+            },
+            '.cm-scroller': { overflow: 'auto', fontFamily: "'Consolas','Monaco','Courier New',monospace" },
+            '.cm-content': { padding: '6px 0' },
+            '.cm-gutters': { background: '#1a1a1a', borderRight: '1px solid #333', color: '#555' },
+        }),
+        EditorView.lineWrapping,
+    ];
+
+    if (typeof onChange === 'function') {
+        extensions.push(EditorView.updateListener.of((update) => {
+            if (update.docChanged) {
+                onChange(update.state.doc.toString());
+            }
+        }));
+    }
+
     const view = new EditorView({
         state: EditorState.create({
             doc: initialValue,
-            extensions: [
-                lineNumbers(),
-                highlightActiveLine(),
-                history(),
-                python(),
-                oneDark,
-                keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
-                EditorView.theme({
-                    '&': {
-                        fontSize: '13px',
-                        height: '100%',
-                        background: '#1e1e1e',
-                    },
-                    '.cm-scroller': { overflow: 'auto', fontFamily: "'Consolas','Monaco','Courier New',monospace" },
-                    '.cm-content': { padding: '6px 0' },
-                    '.cm-gutters': { background: '#1a1a1a', borderRight: '1px solid #333', color: '#555' },
-                }),
-                EditorView.lineWrapping,
-            ],
+            extensions,
         }),
         parent: hostEl,
     });
@@ -46,5 +56,6 @@ export function createCodeEditor(hostEl, initialValue = '') {
         addKeyHandler(fn) {
             view.dom.addEventListener('keydown', fn);
         },
+        view,
     };
 }

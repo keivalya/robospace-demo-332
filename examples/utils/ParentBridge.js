@@ -139,6 +139,7 @@ export class ParentBridge {
     // { id, commit, sceneDir, paths }. `paths` is what keeps a snapshot small —
     // see serializeSnapshot.
     this.robotPack = null;
+    this._hasLoadedProjectScript = false;
 
     // In-flight scene work. Both kinds must be single-flight, but they want opposite
     // treatment on collision — see _handleApplyScene and the LOAD_PROJECT case.
@@ -358,7 +359,7 @@ export class ParentBridge {
         break;
       }
       case 'START_CHALLENGE': {
-        const { challengeId } = data.payload || {};
+        const { challengeId, resetScript } = data.payload || {};
         const spec = CHALLENGES[challengeId];
         if (!spec) {
           this._send('ERROR', { code: 'CHALLENGE_NOT_FOUND', message: `Challenge "${challengeId}" not found` }, data.id);
@@ -367,10 +368,31 @@ export class ParentBridge {
         const started = this.demo.startChallenge(
           challengeId,
           (progress) => this._send('CHALLENGE_PROGRESS', progress),
-          (result) => this._send('CHALLENGE_COMPLETE', result, data.id)
+          (result) => this._send('CHALLENGE_COMPLETE', result)
         );
         if (started) {
-          this._send('CHALLENGE_STARTED', { challengeId, title: spec.title, starterPython: spec.starterPython }, data.id);
+          if (spec.starterPython && typeof window.setPythonScript === 'function') {
+            const currentScript = (typeof window.getPythonScript === 'function') ? window.getPythonScript().trim() : '';
+            if (resetScript || !currentScript || (!this._hasLoadedProjectScript && currentScript.includes('Moving UR5e arm to target'))) {
+              window.setPythonScript(spec.starterPython);
+              this.emitDirty('challenge_started');
+            }
+          }
+          this._send('CHALLENGE_STARTED', {
+            challengeId,
+            title: spec.title,
+            starterPython: spec.starterPython,
+            challenge: {
+              id: spec.id,
+              title: spec.title,
+              subtitle: spec.subtitle,
+              difficulty: spec.difficulty,
+              robotName: spec.robotName,
+              xpReward: spec.xpReward,
+              starTargets: spec.starTargets,
+              targetPositions: spec.targetPositions,
+            },
+          }, data.id);
         } else {
           this._send('ERROR', { code: 'CHALLENGE_START_FAILED', message: 'Failed to start challenge evaluator' }, data.id);
         }
@@ -645,7 +667,8 @@ export class ParentBridge {
     }
 
     if (typeof snap.script === 'string' && typeof window.setPythonScript === 'function') {
-      window.setPythonScript(snap.script);
+      window.setPythonScript(snap.script, { silent: true });
+      this._hasLoadedProjectScript = true;
     }
 
     if (snap.ui) {
@@ -688,6 +711,7 @@ export class ParentBridge {
   }
 
   async _handleNewProject(_payload) {
+    this._hasLoadedProjectScript = false;
     // Reset to the default built-in scene + default script.
     const defaultScene = 'universal_robots_ur5e/scene.xml';
     this.demo.params.scene = defaultScene;

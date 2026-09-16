@@ -57,6 +57,17 @@ export class ChallengeEvaluator {
     this._clearMarkers();
   }
 
+  resetRun() {
+    if (!this.activeChallenge) return;
+    this.status = 'running';
+    this.challengeState = {};
+    this.energyAccumulator = 0;
+    this.simStartTime = this.demo.simClock ? this.demo.simClock.time : 0;
+    this.lastProgressEmit = 0;
+    this.qposHistory = [];
+    this._spawnMarkers(this.activeChallenge);
+  }
+
   sample(sim, model) {
     if (this.status !== 'running' || !this.activeChallenge) return;
 
