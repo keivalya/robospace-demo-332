@@ -7,6 +7,7 @@ import load_mujoco from '../dist/mujoco_wasm.js';
 import { FileUploadManager } from './utils/FileUploadManager.js';
 import { LivePlotter } from './utils/LivePlotter.js';
 import { CameraViewer } from './utils/CameraViewer.js';
+import { ChallengeEvaluator } from './utils/ChallengeEvaluator.js';
 import { ParentBridge } from './utils/ParentBridge.js';
 import { mujocoLogHooks } from './utils/mujocoLog.js';
 import { resolveInitialScene, readStoredScene, forgetStoredScene, DEFAULT_SCENE } from './utils/initialScene.js';
@@ -324,6 +325,7 @@ export class RoboSpaceDemo {
 
     this.livePlotter = new LivePlotter();
     this.cameraViewer = new CameraViewer(this.container);
+    this.challengeEvaluator = new ChallengeEvaluator(this);
 
     const camBtn = document.getElementById('camera-toggle-button');
     if (camBtn) this.cameraViewer.setToggleButton(camBtn);
@@ -651,9 +653,21 @@ export class RoboSpaceDemo {
       this.livePlotter.setLabels(labels);
     }
 
+    // If the model has keyframes, reset to keyframe 0 on initial load to hold steady home pose
+    if (this.model && this.model.nkey > 0 && this.simulation) {
+      this.simulation.resetDataKeyframe(0);
+      this.simulation.forward();
+      this.simClock?.reset(this.model.key_time ? this.model.key_time[0] : 0);
+    }
+
     // Update camera viewer
     if (this.cameraViewer) {
       this.cameraViewer.onModelChanged(this.model, this.simulation);
+    }
+
+    // Reset any active challenge markers on scene reload
+    if (this.challengeEvaluator) {
+      this.challengeEvaluator.stop();
     }
   }
 
@@ -979,6 +993,9 @@ export class RoboSpaceDemo {
       if (this.cameraViewer) {
         this.cameraViewer.render(this.renderer, this.scene, this.simulation, this.model);
       }
+      if (this.challengeEvaluator) {
+        this.challengeEvaluator.sample(this.simulation, this.model);
+      }
       this._releaseFrameWaiters();
       return;
     }
@@ -1081,6 +1098,9 @@ export class RoboSpaceDemo {
     if (this.cameraViewer) {
       this.cameraViewer.render(this.renderer, this.scene, this.simulation, this.model);
     }
+    if (this.challengeEvaluator) {
+      this.challengeEvaluator.sample(this.simulation, this.model);
+    }
     this._releaseFrameWaiters();
   }
 
@@ -1149,6 +1169,14 @@ export class RoboSpaceDemo {
     for (const resolve of waiters) {
       try { resolve(); } catch (e) { console.error('[robospace] frame waiter threw:', e); }
     }
+  }
+
+  startChallenge(challengeId, onProgress, onComplete) {
+    return this.challengeEvaluator?.start(challengeId, onProgress, onComplete);
+  }
+
+  stopChallenge() {
+    this.challengeEvaluator?.stop();
   }
 }
 

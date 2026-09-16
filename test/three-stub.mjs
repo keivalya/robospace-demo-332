@@ -8,9 +8,11 @@ class Stub {
     this.matrixWorld = this;
     this.position = this;
     this.up = this;
+    this.color = this;
     this.x = 0;
     this.y = 0;
     this.z = 0;
+    this.children = [];
   }
   set(x, y, z, w) {
     if (x !== undefined) this.x = x;
@@ -19,9 +21,20 @@ class Stub {
     if (w !== undefined) this.w = w;
     return this;
   }
+  setHex() { return this; }
   clone() { return new Stub(); }
   copy() { return this; }
-  add() { return this; }
+  add(child) {
+    if (child && Array.isArray(this.children)) this.children.push(child);
+    return this;
+  }
+  remove(child) {
+    if (child && Array.isArray(this.children)) {
+      const i = this.children.indexOf(child);
+      if (i >= 0) this.children.splice(i, 1);
+    }
+    return this;
+  }
   multiply() { return this; }
   updateProjectionMatrix() { return this; }
   updateMatrix() { return this; }
@@ -47,3 +60,5 @@ export const WebGLRenderTarget = Stub;
 export const Group = Stub;
 export const Vector2 = Stub;
 export const Quaternion = Stub;
+export const SphereGeometry = Stub;
+export const MeshBasicMaterial = Stub;

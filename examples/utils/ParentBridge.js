@@ -12,6 +12,7 @@
 //                    SCENE_OK, SCENE_TEXT, SCENE_PROGRESS
 
 import { resolveEntryXmlPath, snapshotSceneDir } from './safePath.js';
+import { CHALLENGES } from './challengeRegistry.js';
 
 const PROTOCOL_VERSION = 1;
 const HELLO_TIMEOUT_MS = 1500;
@@ -354,6 +355,44 @@ export class ParentBridge {
           activeCamera: this.demo.cameraViewer?.activeCamera?.name || null,
           cameras: this.demo.cameraViewer?.cameras?.map((c) => c.name) || [],
         }, data.id);
+        break;
+      }
+      case 'START_CHALLENGE': {
+        const { challengeId } = data.payload || {};
+        const spec = CHALLENGES[challengeId];
+        if (!spec) {
+          this._send('ERROR', { code: 'CHALLENGE_NOT_FOUND', message: `Challenge "${challengeId}" not found` }, data.id);
+          break;
+        }
+        const started = this.demo.startChallenge(
+          challengeId,
+          (progress) => this._send('CHALLENGE_PROGRESS', progress),
+          (result) => this._send('CHALLENGE_COMPLETE', result, data.id)
+        );
+        if (started) {
+          this._send('CHALLENGE_STARTED', { challengeId, title: spec.title, starterPython: spec.starterPython }, data.id);
+        } else {
+          this._send('ERROR', { code: 'CHALLENGE_START_FAILED', message: 'Failed to start challenge evaluator' }, data.id);
+        }
+        break;
+      }
+      case 'STOP_CHALLENGE': {
+        this.demo.stopChallenge();
+        this._send('CHALLENGE_STOPPED', {}, data.id);
+        break;
+      }
+      case 'GET_CHALLENGES': {
+        const list = Object.values(CHALLENGES).map((c) => ({
+          id: c.id,
+          title: c.title,
+          subtitle: c.subtitle,
+          difficulty: c.difficulty,
+          robotName: c.robotName,
+          xpReward: c.xpReward,
+          starTargets: c.starTargets,
+          starterPython: c.starterPython,
+        }));
+        this._send('CHALLENGES_LIST', { challenges: list }, data.id);
         break;
       }
       default:
