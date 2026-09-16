@@ -19,6 +19,7 @@
     "test:scene": "node --import ./test/register.mjs tools/check-scene.mjs test/fixtures/kitchen_stretch.xml",
     "test:sensors": "node --import ./test/register.mjs test/sensors-cameras.test.mjs",
     "test:challenges": "node --import ./test/register.mjs test/challenge-evaluator.test.mjs",
+    "test:dataset": "node test/data-logger.test.mjs && node test/lerobot-exporter.test.mjs && node test/macro-teacher.test.mjs",
     "test:analytics": "node test/analytics.test.mjs"
   },
   "repository": {

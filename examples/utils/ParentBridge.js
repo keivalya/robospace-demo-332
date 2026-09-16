@@ -417,6 +417,56 @@ export class ParentBridge {
         this._send('CHALLENGES_LIST', { challenges: list }, data.id);
         break;
       }
+      case 'START_DATASET_GENERATION': {
+        const ui = this.demo.datasetPipelineUI;
+        if (!ui) {
+          this._send('ERROR', { code: 'DATASET_UI_NOT_AVAILABLE', message: 'Dataset pipeline UI not initialized' }, data.id);
+          break;
+        }
+        ui.show();
+        ui.startGeneration()
+          .then(() => this._send('DATASET_STARTED', {}, data.id))
+          .catch((err) => this._send('ERROR', { code: 'DATASET_START_FAILED', message: String(err?.message || err) }, data.id));
+        break;
+      }
+      case 'STOP_DATASET_GENERATION': {
+        if (this.demo.datasetPipelineUI) {
+          this.demo.datasetPipelineUI.stopGeneration();
+        }
+        this._send('DATASET_STOPPED', {}, data.id);
+        break;
+      }
+      case 'GET_DATASET_STATUS': {
+        const progress = this.demo.dataRecorder ? this.demo.dataRecorder.getProgress() : null;
+        this._send('DATASET_STATUS', { progress }, data.id);
+        break;
+      }
+      case 'DOWNLOAD_DATASET': {
+        if (!this.demo.datasetPipelineUI) {
+          this._send('ERROR', { code: 'DATASET_UI_NOT_AVAILABLE', message: 'Dataset pipeline UI not initialized' }, data.id);
+          break;
+        }
+        this.demo.datasetPipelineUI.downloadZip()
+          .then(() => this._send('DATASET_DOWNLOAD_STARTED', {}, data.id))
+          .catch((err) => this._send('ERROR', { code: 'DATASET_DOWNLOAD_FAILED', message: String(err?.message || err) }, data.id));
+        break;
+      }
+      case 'PUSH_DATASET_TO_HF': {
+        const { repoId, token, isPrivate } = data.payload || {};
+        if (!this.demo.datasetPipelineUI?.exporter) {
+          this._send('ERROR', { code: 'EXPORTER_NOT_AVAILABLE', message: 'Exporter not initialized' }, data.id);
+          break;
+        }
+        this.demo.datasetPipelineUI.exporter.pushToHuggingFace({
+          repoId,
+          token,
+          isPrivate,
+          onProgress: (p) => this._send('DATASET_HF_PROGRESS', p),
+        })
+          .then((res) => this._send('DATASET_HF_COMPLETE', res, data.id))
+          .catch((err) => this._send('ERROR', { code: 'HF_PUSH_FAILED', message: String(err?.message || err) }, data.id));
+        break;
+      }
       default:
         // Unknown but well-formed message — ignore.
         break;

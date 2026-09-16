@@ -8,6 +8,7 @@ import { FileUploadManager } from './utils/FileUploadManager.js';
 import { LivePlotter } from './utils/LivePlotter.js';
 import { CameraViewer } from './utils/CameraViewer.js';
 import { ChallengeEvaluator } from './utils/ChallengeEvaluator.js';
+import { DatasetPipelineUI } from './utils/DatasetPipelineUI.js';
 import { ParentBridge } from './utils/ParentBridge.js';
 import { mujocoLogHooks } from './utils/mujocoLog.js';
 import { resolveInitialScene, readStoredScene, forgetStoredScene, DEFAULT_SCENE } from './utils/initialScene.js';
@@ -326,9 +327,13 @@ export class RoboSpaceDemo {
     this.livePlotter = new LivePlotter();
     this.cameraViewer = new CameraViewer(this.container);
     this.challengeEvaluator = new ChallengeEvaluator(this);
+    this.datasetPipelineUI = new DatasetPipelineUI(this, this.container);
 
     const camBtn = document.getElementById('camera-toggle-button');
     if (camBtn) this.cameraViewer.setToggleButton(camBtn);
+
+    const dataBtn = document.getElementById('dataset-toggle-button');
+    if (dataBtn) this.datasetPipelineUI.setToggleButton(dataBtn);
 
     // versioned() is passed in because ParentBridge lazily imports sceneWriter /
     // robotPacks for APPLY_SCENE, and a lazy import without the ?v=N serves stale.

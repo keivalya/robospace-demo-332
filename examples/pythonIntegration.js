@@ -282,6 +282,105 @@ export async function initializePythonEnvironment(demo) {
             };
         };
 
+        /**
+         * Privileged Simulator API: exact ground-truth world pose of any body, geom, or site.
+         * Only accessible to the teacher script / macro engine.
+         */
+        window.simGetObjectPose = (name) => {
+            const m = demo.model;
+            const sim = demo.simulation;
+            if (!m || !sim) return null;
+            const sName = String(name);
+
+            // 1. Check bodies
+            const bNames = readNames(m, m.name_bodyadr, m.nbody, 'body');
+            const bIdx = bNames.indexOf(sName);
+            if (bIdx >= 0) return window.getFramePose('body', bIdx);
+
+            // 2. Check geoms
+            const gNames = readNames(m, m.name_geomadr, m.ngeom, 'geom');
+            const gIdx = gNames.indexOf(sName);
+            if (gIdx >= 0) return window.getFramePose('geom', gIdx);
+
+            // 3. Check sites
+            const sNames = readNames(m, m.name_siteadr, m.nsite, 'site');
+            const sIdx = sNames.indexOf(sName);
+            if (sIdx >= 0) return window.getFramePose('site', sIdx);
+
+            return null;
+        };
+
+        /**
+         * Privileged Simulator API: teleport a body with a free joint and zero its velocities.
+         */
+        window.simSetObjectPose = (name, posArray, quatArray) => {
+            const m = demo.model;
+            const sim = demo.simulation;
+            if (!m || !sim) return false;
+            const sName = String(name);
+            const bNames = readNames(m, m.name_bodyadr, m.nbody, 'body');
+            const bIdx = bNames.indexOf(sName);
+            if (bIdx < 0) return false;
+
+            const jAdr = m.body_jntadr[bIdx];
+            const jNum = m.body_jntnum[bIdx];
+            let freeJntAdr = -1;
+            for (let j = jAdr; j < jAdr + jNum; j++) {
+                if (m.jnt_type[j] === 0) { // mjJNT_FREE
+                    freeJntAdr = j;
+                    break;
+                }
+            }
+            if (freeJntAdr < 0) return false;
+
+            const qposadr = m.jnt_qposadr[freeJntAdr];
+            const dofadr = m.jnt_dofadr[freeJntAdr];
+
+            const pos = toNumberArray(posArray);
+            const quat = toNumberArray(quatArray);
+
+            if (pos.length >= 3) {
+                sim.qpos[qposadr + 0] = Number(pos[0]);
+                sim.qpos[qposadr + 1] = Number(pos[1]);
+                sim.qpos[qposadr + 2] = Number(pos[2]);
+            }
+            if (quat.length >= 4) {
+                sim.qpos[qposadr + 3] = Number(quat[0]);
+                sim.qpos[qposadr + 4] = Number(quat[1]);
+                sim.qpos[qposadr + 5] = Number(quat[2]);
+                sim.qpos[qposadr + 6] = Number(quat[3]);
+            }
+
+            for (let k = 0; k < 6; k++) {
+                sim.qvel[dofadr + k] = 0;
+            }
+            sim.forward();
+            return true;
+        };
+
+        /**
+         * Privileged Simulator API: randomize object pose within ranges for domain randomization.
+         */
+        window.simRandomizeObjectPose = (name, xRange, yRange, z, yawRange) => {
+            const xr = toNumberArray(xRange);
+            const yr = toNumberArray(yRange);
+            const ywr = toNumberArray(yawRange);
+            const xMin = xr[0] != null ? xr[0] : 0.45;
+            const xMax = xr[1] != null ? xr[1] : 0.55;
+            const yMin = yr[0] != null ? yr[0] : -0.1;
+            const yMax = yr[1] != null ? yr[1] : 0.1;
+            const yawMin = ywr[0] != null ? ywr[0] : -0.5;
+            const yawMax = ywr[1] != null ? ywr[1] : 0.5;
+
+            const x = xMin + Math.random() * (xMax - xMin);
+            const y = yMin + Math.random() * (yMax - yMin);
+            const yaw = yawMin + Math.random() * (yawMax - yawMin);
+
+            const half = yaw / 2;
+            const quat = [Math.cos(half), 0, 0, Math.sin(half)];
+            return window.simSetObjectPose(name, [x, y, z], quat);
+        };
+
         /** Centre of mass of a body's subtree; 'world' (body 0) gives the whole model's. */
         window.getSubtreeCom = (bodyId) => {
             const sim = demo.simulation;
@@ -406,11 +505,18 @@ export async function initializePythonEnvironment(demo) {
             const frames = (demo.playback && demo.playback.frames) || [];
             const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
+            const recordDataEvery = (demo.dataRecorder && demo.dataRecorder.isRecording)
+                ? Math.max(1, Math.round((1 / demo.dataRecorder.fps) / timestep))
+                : 0;
+
             for (let s = 1; s <= steps; s++) {
                 const a = s / steps;
                 for (let i = 0; i < nu; i++) ctrl[i] = from[i] + a * (to[i] - from[i]);
                 sim.step();
                 if (s % recordEvery === 0 || s === steps) frames.push(Float64Array.from(sim.qpos));
+                if (recordDataEvery > 0 && (s % recordDataEvery === 0 || s === steps)) {
+                    demo.dataRecorder.recordFrame(demo, true);
+                }
                 // Bail out rather than finish a long motion the user has cancelled.
                 if (s % 500 === 0 && window._pythonShouldStop) break;
             }
@@ -1464,6 +1570,43 @@ class Robot:
         """Move the robot arm's end-effector to (pos, quat) using IK."""
         return self.arm.move_to(pos, quat=quat, seconds=seconds)
 
+    def reach_pose(self, *args, **kwargs):
+        """Move the robot end-effector to (x, y, z) using inverse kinematics.
+
+        Accepts:
+            robot.reach_pose(x, y, z)
+            robot.reach_pose(x, y, z, quat=tool_down(), seconds=1.0)
+            robot.reach_pose([x, y, z], quat=tool_down(), seconds=1.0)
+        """
+        seconds = kwargs.get('seconds', 1.0)
+        quat = kwargs.get('quat', None)
+        if len(args) == 3 and all(isinstance(a, (int, float)) for a in args):
+            pos = [float(args[0]), float(args[1]), float(args[2])]
+        elif len(args) >= 1:
+            pos = args[0]
+            if len(args) >= 2 and quat is None:
+                quat = args[1]
+            if len(args) >= 3:
+                seconds = args[2]
+        else:
+            raise ValueError("reach_pose requires (x, y, z) or ([x, y, z], quat=...)")
+        return self.move_to(pos, quat=quat, seconds=seconds)
+
+    def get_ee_pose(self):
+        """Get 6-DoF end-effector world pose as a dict: {'pos': array, 'quat': array, 'mat': array}."""
+        tf = self.arm.target_frame
+        kind, name = tf.split(':', 1) if ':' in tf else ('body', tf)
+        f = frame(kind, name)
+        return {'pos': f['pos'], 'quat': f['quat'], 'mat': f['mat']}
+
+    def get_joint_angles(self):
+        """Get present robot joint angles (qpos)."""
+        return get_qpos()
+
+    def get_joint_velocities(self):
+        """Get present robot joint velocities (qvel)."""
+        return get_qvel()
+
     def home(self, seconds=1.0):
         """Return all arm joints to zero / home position."""
         return self.arm.home(seconds=seconds)
@@ -1493,6 +1636,64 @@ class Robot:
 def get_robot():
     """Get the high-level Robot instance for the active model."""
     return Robot()
+
+# Pre-instantiated global robot for intuitive scripting
+robot = Robot()
+
+class SimulatorCheatingAPI:
+    """Privileged simulator API for teacher macro policies and domain randomization.
+    Provides ground truth world poses and direct object manipulation."""
+
+    def get_exact_object_pose(self, name):
+        """Read ground-truth world pose of any body, geom or site."""
+        res = window.simGetObjectPose(name)
+        if not res:
+            raise ValueError(f"no object, body, geom or site named {name!r}")
+        py_res = res.to_py()
+        return {
+            'pos': np.array(py_res['pos']),
+            'quat': np.array(py_res['quat']),
+            'mat': np.array(py_res['mat']),
+        }
+
+    def set_exact_object_pose(self, name, pos, quat=None):
+        """Teleport an object with a free joint and zero its velocities."""
+        q = quat if quat is not None else [1.0, 0.0, 0.0, 0.0]
+        ok = window.simSetObjectPose(name, to_js(list(pos)), to_js(list(q)))
+        if not ok:
+            raise ValueError(f"could not set pose for {name!r} (must be a body with a freejoint)")
+
+    def randomize_object_pose(self, name, x_range=None, y_range=None, z=None, yaw_range=None):
+        """Domain randomization helper for object spawning."""
+        xr = x_range or [0.45, 0.55]
+        yr = y_range or [-0.12, 0.12]
+        zv = 0.025 if z is None else float(z)
+        ywr = yaw_range or [-0.5, 0.5]
+        return bool(window.simRandomizeObjectPose(name, to_js(list(xr)), to_js(list(yr)), zv, to_js(list(ywr))))
+
+    def reset(self):
+        """Reset simulation and sim clock."""
+        reset()
+
+    def step(self, n=1):
+        """Step simulation physics."""
+        return step(n)
+
+    def forward(self):
+        """Run forward dynamics."""
+        forward()
+
+    def get_robot_state(self):
+        """Get privileged internal simulator state for evaluation."""
+        return {
+            'time': get_time(),
+            'steps': get_steps(),
+            'qpos': get_qpos(),
+            'qvel': get_qvel(),
+        }
+
+# Pre-instantiated global sim object for teacher macros
+sim = SimulatorCheatingAPI()
 
 def get_selected_body():
     """Get name of the 3D body currently selected in the canvas."""
