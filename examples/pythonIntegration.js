@@ -355,6 +355,7 @@ export async function initializePythonEnvironment(demo) {
                 sim.qvel[dofadr + k] = 0;
             }
             sim.forward();
+            if (typeof demo._syncTransforms === 'function') demo._syncTransforms();
             return true;
         };
 
@@ -509,18 +510,28 @@ export async function initializePythonEnvironment(demo) {
                 ? Math.max(1, Math.round((1 / demo.dataRecorder.fps) / timestep))
                 : 0;
 
+            let lastAdvancedStep = 0;
+
             for (let s = 1; s <= steps; s++) {
                 const a = s / steps;
                 for (let i = 0; i < nu; i++) ctrl[i] = from[i] + a * (to[i] - from[i]);
                 sim.step();
                 if (s % recordEvery === 0 || s === steps) frames.push(Float64Array.from(sim.qpos));
                 if (recordDataEvery > 0 && (s % recordDataEvery === 0 || s === steps)) {
+                    sim.forward();
+                    if (typeof demo._syncTransforms === 'function') demo._syncTransforms();
+                    if (demo.simClock) {
+                        demo.simClock.advance(s - lastAdvancedStep, timestep);
+                        lastAdvancedStep = s;
+                    }
                     demo.dataRecorder.recordFrame(demo, true);
                 }
                 // Bail out rather than finish a long motion the user has cancelled.
                 if (s % 500 === 0 && window._pythonShouldStop) break;
             }
-            demo.simClock?.advance(steps, timestep);
+            if (demo.simClock && steps > lastAdvancedStep) {
+                demo.simClock.advance(steps - lastAdvancedStep, timestep);
+            }
 
             // Keep the true dynamic state so it can be restored when playback ends —
             // replaying frames writes qpos only, and stopping mid-frame would otherwise

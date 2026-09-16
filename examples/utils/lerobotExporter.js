@@ -15,6 +15,16 @@ export class LeRobotExporter {
   }
 
   /**
+   * Resolves the standardized LeRobot camera feature key: observation.images.<camera_name>
+   */
+  getCameraKey() {
+    const r = this.recorder;
+    const raw = r.cameraName || (r.episodes[0]?.frames[0]?.cameraName) || 'front_camera';
+    const clean = raw.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+    return clean.startsWith('observation.images.') ? clean : `observation.images.${clean}`;
+  }
+
+  /**
    * Generates the LeRobot v2.0 meta/info.json dictionary.
    */
   generateInfoJson() {
@@ -23,7 +33,7 @@ export class LeRobotExporter {
     const actionDim = stats.action?.mean?.length || 8;
     const stateDim = stats['observation.state']?.mean?.length || (actionDim * 2 + 7);
 
-    const cameraKey = r.cameraName || 'observation.images.camera';
+    const cameraKey = this.getCameraKey();
 
     return {
       codebase_version: 'v2.0',
@@ -253,6 +263,7 @@ if __name__ == "__main__":
    */
   generateReadme() {
     const r = this.recorder;
+    const cameraKey = this.getCameraKey();
     return `# ${r.datasetName}
 
 Standardized **LeRobot v2.0** dataset collected via **RoboSpace** scripted policy pipeline.
@@ -276,7 +287,7 @@ Standardized **LeRobot v2.0** dataset collected via **RoboSpace** scripted polic
 │       └── episode_000000.jsonl
 └── videos/
     └── chunk-000/
-        └── ${r.cameraName || 'observation.images.camera'}/
+        └── ${cameraKey}/
             └── episode_000000_frame_000000.jpg
 \`\`\`
 
@@ -343,7 +354,7 @@ Run the included \`python load_dataset.py\` to verify dataset integrity.
     zip.file('load_dataset.py', this.generatePythonLoaderScript());
 
     const dataFolder = zip.folder('data').folder('chunk-000');
-    const camKey = r.cameraName || 'observation.images.camera';
+    const camKey = this.getCameraKey();
     const videoFolder = zip.folder('videos').folder('chunk-000').folder(camKey);
 
     const totalSteps = r.episodes.length * 2;

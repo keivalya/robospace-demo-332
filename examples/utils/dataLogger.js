@@ -173,10 +173,11 @@ export class DataRecorder {
     // 3. Visuals: Attached robot camera frames
     let rgbImage = null;
     let cameraIdentifier = this.cameraName;
+    if (!cameraIdentifier && demo.cameraViewer?.activeCamera) {
+      cameraIdentifier = demo.cameraViewer.activeCamera.name;
+      this.cameraName = cameraIdentifier;
+    }
     if (demo.cameraViewer && demo.renderer && demo.scene) {
-      if (!cameraIdentifier && demo.cameraViewer.activeCamera) {
-        cameraIdentifier = demo.cameraViewer.activeCamera.name;
-      }
       try {
         const captured = demo.cameraViewer.captureImage(
           demo.renderer,
@@ -212,7 +213,7 @@ export class DataRecorder {
       jointVel,
       eePos,
       eeQuat,
-      cameraName: cameraIdentifier || 'observation.images.camera',
+      cameraName: cameraIdentifier || 'front_camera',
       image: rgbImage,
     };
 

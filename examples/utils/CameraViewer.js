@@ -11,7 +11,7 @@ import { readNames, getPosition } from '../mujocoUtils.js';
 
 export class CameraViewer {
   constructor(containerEl) {
-    this._container = containerEl || document.getElementById('appbody') || document.body;
+    this._container = containerEl || (typeof document !== 'undefined' ? (document.getElementById('appbody') || document.body) : null);
     this._visible = false;
     this._minimized = false;
     this._activeCameraIndex = 0;
@@ -30,8 +30,10 @@ export class CameraViewer {
     this._statusEl = null;
     this._toggleBtn = null;
 
-    this._createPanel();
-    this._setupDragging();
+    if (this._container && typeof document !== 'undefined') {
+      this._createPanel();
+      this._setupDragging();
+    }
   }
 
   // ── Public API ──────────────────────────────────────────────
@@ -304,12 +306,18 @@ export class CameraViewer {
 
     const prevTarget = renderer.getRenderTarget();
     renderer.setRenderTarget(this._offscreenTarget);
+    renderer.setScissorTest(false);
 
+    // 1. Update camera pose and intrinsics first
+    this.updateCamera(simulation, model, camIdx);
+
+    // 2. Update aspect ratio and projection matrix with the updated fov
     const oldAspect = this._threeCamera.aspect;
     this._threeCamera.aspect = width / height;
     this._threeCamera.updateProjectionMatrix();
 
-    this.updateCamera(simulation, model, camIdx);
+    // 3. Cleanly clear the offscreen render target
+    renderer.clear(true, true, true);
 
     // Temporarily suppress scene reflectors during capture pass
     const hiddenReflectors = [];
@@ -404,10 +412,12 @@ export class CameraViewer {
       m = simulation.site_xmat.subarray(9 * siteId, 9 * siteId + 9);
     } else if (cam.bodyId !== undefined && simulation.xpos && simulation.xmat) {
       const bodyId = cam.bodyId;
-      px = simulation.xpos[3 * bodyId + 0];
-      py = simulation.xpos[3 * bodyId + 1];
-      pz = simulation.xpos[3 * bodyId + 2];
       m = simulation.xmat.subarray(9 * bodyId, 9 * bodyId + 9);
+      // Offset camera 0.08m forward along tool pointing axis (Column 2 of m) to sit past palm
+      const offset = 0.08;
+      px = simulation.xpos[3 * bodyId + 0] + m[2] * offset;
+      py = simulation.xpos[3 * bodyId + 1] + m[5] * offset;
+      pz = simulation.xpos[3 * bodyId + 2] + m[8] * offset;
     }
 
     if (m) {
@@ -435,6 +445,7 @@ export class CameraViewer {
       this._threeCamera.matrix.copy(this._matrix4);
       this._threeCamera.matrixWorld.copy(this._matrix4);
       this._threeCamera.matrixAutoUpdate = false;
+      this._threeCamera.fov = cam.fovy || 75;
     }
   }
 

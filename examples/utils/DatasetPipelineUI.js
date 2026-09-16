@@ -391,6 +391,10 @@ export class DatasetPipelineUI {
       if (taskSpec?.sceneXml && typeof window.robospaceLoadScene === 'function') {
         statusText.textContent = 'Loading scene and robot pack...';
         await window.robospaceLoadScene(taskSpec.sceneXml, taskSpec.robot, taskSpec.id);
+        this._updateCameraOptions();
+        if (!cameraName && this.demo.cameraViewer?.activeCamera) {
+          this.recorder.cameraName = this.demo.cameraViewer.activeCamera.name;
+        }
       }
 
       for (let ep = 0; ep < numEpisodes; ep++) {
@@ -449,6 +453,8 @@ export class DatasetPipelineUI {
         }
 
         this.recorder.endEpisode(success);
+        this._updatePreviewThumbnail();
+        await new Promise((resolve) => setTimeout(resolve, 0));
 
         // Update live metrics
         const progress = this.recorder.getProgress();
