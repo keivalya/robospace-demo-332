@@ -164,7 +164,7 @@ body {
     background: #0a0a0d;
 }
 
-#appbody canvas {
+#appbody > canvas {
     display: block;
     position: absolute;
     top: 0;

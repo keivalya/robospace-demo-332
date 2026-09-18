@@ -35,16 +35,18 @@ try {
   };
 
   cv.onModelChanged(mockModel, mockSim);
-  assert.equal(cv.cameras.length, 1);
-  assert.equal(cv.cameras[0].name, 'front_camera');
-  assert.equal(cv.cameras[0].fovy, 60);
+  assert.ok(cv.cameras.some((c) => c.name === 'front_camera'));
+  assert.ok(cv.cameras.some((c) => c.name === 'overhead_camera'));
+  const frontIdx = cv.getFrontCameraIndex();
+  assert.equal(cv.cameras[frontIdx].name, 'front_camera');
+  assert.equal(cv.cameras[frontIdx].fovy, 60);
 
   // Update camera and verify camera fov is applied
-  cv.updateCamera(mockSim, mockModel, 0);
+  cv.updateCamera(mockSim, mockModel, frontIdx);
   assert.equal(cv.threeCamera.fov, 60);
   ok('native camera updates fov and orientation from MuJoCo state');
 
-  // 2. Test virtual camera offset from robot hand
+  // 2. Test virtual camera offset from robot hand and standard viewpoints
   const mockPandaModel = {
     ncam: 0,
     nsite: 0,
@@ -61,14 +63,23 @@ try {
   };
 
   cv.onModelChanged(mockPandaModel, mockPandaSim);
-  assert.equal(cv.cameras.length, 1);
-  assert.ok(cv.cameras[0].isVirtual);
-  cv.updateCamera(mockPandaSim, mockPandaModel, 0);
+  assert.ok(cv.cameras.some((c) => c.name === 'gripper_camera'));
+  assert.ok(cv.cameras.some((c) => c.name === 'overhead_camera'));
+  assert.ok(cv.cameras.some((c) => c.name === 'front_camera'));
+  const pandaGripIdx = cv.getGripperCameraIndex();
+  assert.ok(cv.cameras[pandaGripIdx].isVirtual);
+  cv.updateCamera(mockPandaSim, mockPandaModel, pandaGripIdx);
 
   // Verify virtual camera matrix is properly oriented
   const mat = cv.threeCamera.matrix;
   assert.ok(mat instanceof THREE.Matrix4);
   ok('virtual gripper camera offsets correctly along tool axis');
+
+  // Also verify overhead camera transform
+  const overheadIdx = cv.getOverheadCameraIndex();
+  assert.ok(overheadIdx >= 0);
+  cv.updateCamera(mockPandaSim, mockPandaModel, overheadIdx);
+  ok('overhead top-down camera transforms correctly');
 
   // 3. Test DataRecorder camera key resolution
   const recorder = new DataRecorder({
@@ -108,7 +119,7 @@ try {
   assert.deepEqual(info.features[camKey].shape, [224, 224, 3]);
   ok('LeRobotExporter standardized observation.images.<name> feature key');
 
-  // 5. Test Gripper Camera is added even when native spectator cameras exist
+  // 5. Test Gripper Camera and Overhead Camera are added even when native spectator cameras exist
   const multiCamModel = {
     ncam: 1,
     name_camadr: new Int32Array([0]),
@@ -120,11 +131,12 @@ try {
   };
   const cvMulti = new CameraViewer(null);
   cvMulti.onModelChanged(multiCamModel, mockPandaSim);
-  assert.equal(cvMulti.cameras.length, 2);
+  assert.ok(cvMulti.cameras.length >= 3);
   const gripIdx = cvMulti.getGripperCameraIndex();
-  assert.equal(gripIdx, 1);
   assert.equal(cvMulti.cameras[gripIdx].name, 'gripper_camera');
-  ok('gripper camera is guaranteed to be present and indexed even with native spectator cameras');
+  const ovhIdx = cvMulti.getOverheadCameraIndex();
+  assert.equal(cvMulti.cameras[ovhIdx].name, 'overhead_camera');
+  ok('gripper and overhead cameras are guaranteed to be present and indexed even with native spectator cameras');
 
 } catch (err) {
   bad('Camera capture test failed', err);

@@ -90,7 +90,7 @@ export class DatasetPipelineUI {
         <!-- Configuration Form -->
         <div class="pipeline-section" id="pipeline-config-section">
           <div class="pipeline-form-row">
-            <label class="pipeline-label">Task / Policy</label>
+            <label class="pipeline-label">Task</label>
             <select id="pipeline-task-select" class="pipeline-select">
               <option value="panda_pick_cube">Franka Panda — Pick Cube</option>
               <option value="panda_pick_and_place">Franka Panda — Pick & Place</option>
@@ -100,10 +100,19 @@ export class DatasetPipelineUI {
             </select>
           </div>
 
+          <div class="pipeline-form-row">
+            <label class="pipeline-label">Camera Angle</label>
+            <select id="pipeline-camera-select" class="pipeline-select">
+              <option value="gripper_camera">Gripper (Wrist POV)</option>
+              <option value="overhead_camera">Overhead (Top-Down)</option>
+              <option value="front_camera">Front (Angled)</option>
+            </select>
+          </div>
+
           <div class="pipeline-form-grid">
             <div class="pipeline-form-col">
               <label class="pipeline-label">Episodes</label>
-              <input type="number" id="pipeline-episodes-input" class="pipeline-input" min="1" max="500" value="10" />
+              <input type="number" id="pipeline-episodes-input" class="pipeline-input" min="1" max="500" value="5" />
             </div>
             <div class="pipeline-form-col">
               <label class="pipeline-label">Framerate (Hz)</label>
@@ -115,32 +124,14 @@ export class DatasetPipelineUI {
             </div>
           </div>
 
-          <div class="pipeline-form-grid">
-            <div class="pipeline-form-col">
-              <label class="pipeline-label">Camera</label>
-              <div class="pipeline-camera-badge" id="pipeline-camera-badge" title="Always records using the robot's onboard gripper/wrist camera">
-                <span class="pipeline-camera-icon">📷</span>
-                <span>Gripper (Wrist POV)</span>
-              </div>
-            </div>
-            <div class="pipeline-form-col">
-              <label class="pipeline-label">Resolution</label>
-              <select id="pipeline-resolution-select" class="pipeline-select">
-                <option value="224" selected>224 × 224 (Standard)</option>
-                <option value="128">128 × 128 (Fast)</option>
-                <option value="256">256 × 256</option>
-              </select>
-            </div>
-          </div>
-
           <div class="pipeline-checkbox-group">
             <label class="pipeline-checkbox-label">
               <input type="checkbox" id="pipeline-domain-rand-cb" checked />
-              <span>Domain Randomization (Randomize object positions)</span>
+              <span>Randomize objects</span>
             </label>
             <label class="pipeline-checkbox-label">
               <input type="checkbox" id="pipeline-fast-mode-cb" checked />
-              <span>Fast-Forward (Full physics speed, 100× real-time)</span>
+              <span>Fast physics (100×)</span>
             </label>
           </div>
 
@@ -154,7 +145,7 @@ export class DatasetPipelineUI {
           </div>
         </div>
 
-        <!-- Live Progress & Metrics -->
+        <!-- Live Progress Section (Minimal) -->
         <div class="pipeline-section" id="pipeline-progress-section" style="display:none">
           <div class="pipeline-progress-header">
             <span id="pipeline-status-text">Ready</span>
@@ -164,47 +155,20 @@ export class DatasetPipelineUI {
           <div class="pipeline-progress-bar-bg">
             <div id="pipeline-progress-bar-fill" class="pipeline-progress-bar-fill" style="width: 0%"></div>
           </div>
-
-          <div class="pipeline-metrics-grid">
-            <div class="pipeline-metric-card">
-              <div class="pipeline-metric-val" id="pipeline-metric-success">0%</div>
-              <div class="pipeline-metric-label">Success Rate</div>
-            </div>
-            <div class="pipeline-metric-card">
-              <div class="pipeline-metric-val" id="pipeline-metric-frames">0</div>
-              <div class="pipeline-metric-label">Frames Logged</div>
-            </div>
-            <div class="pipeline-metric-card">
-              <div class="pipeline-metric-val" id="pipeline-metric-size">0 MB</div>
-              <div class="pipeline-metric-label">Estimated Size</div>
-            </div>
-          </div>
-
-          <!-- Live Camera Preview -->
-          <div class="pipeline-preview-box">
-            <div class="pipeline-preview-header">
-              <span>Attached Camera (Gripper POV)</span>
-              <span id="pipeline-preview-cam-name" class="pipeline-preview-tag">gripper_camera</span>
-            </div>
-            <div class="pipeline-preview-canvas-wrapper">
-              <canvas id="pipeline-preview-canvas" width="224" height="224"></canvas>
-            </div>
-          </div>
         </div>
 
-        <!-- Export Actions -->
+        <!-- Export Actions (Minimal) -->
         <div class="pipeline-section" id="pipeline-export-section" style="display:none">
-          <div class="pipeline-export-title">Dataset Ready for Export</div>
           <div class="pipeline-export-buttons">
             <button type="button" id="pipeline-download-zip-btn" class="pipeline-btn pipeline-btn-success">
-              ⬇ Download Dataset (.zip)
+              ⬇ Download ZIP
             </button>
-            <div id="pipeline-download-progress-bar-bg" class="pipeline-progress-bar-bg" style="display:none; margin-top: 4px;">
-              <div id="pipeline-download-progress-fill" class="pipeline-progress-bar-fill" style="width: 0%"></div>
-            </div>
             <button type="button" id="pipeline-push-hf-btn" class="pipeline-btn pipeline-btn-secondary">
-              🤗 Push to Hugging Face
+              🤗 Hugging Face
             </button>
+          </div>
+          <div id="pipeline-download-progress-bar-bg" class="pipeline-progress-bar-bg" style="display:none; margin-top: 4px;">
+            <div id="pipeline-download-progress-fill" class="pipeline-progress-bar-fill" style="width: 0%"></div>
           </div>
           <div id="pipeline-export-status" class="pipeline-export-status"></div>
         </div>
@@ -216,6 +180,9 @@ export class DatasetPipelineUI {
 
     // Draggable header setup
     this._setupDragging();
+
+    // Populate cameras
+    this._updateCameraOptions();
 
     // Build Hugging Face Modal
     this._createHfModal();
@@ -296,13 +263,6 @@ export class DatasetPipelineUI {
     p.querySelector('#pipeline-task-select').addEventListener('change', (e) => {
       this._activeTaskKey = e.target.value;
     });
-
-    // Recorder frame preview hook
-    this.recorder.addListener((event, data) => {
-      if (event === 'frame') {
-        this._updatePreviewThumbnail();
-      }
-    });
   }
 
   _setupDragging() {
@@ -371,67 +331,66 @@ export class DatasetPipelineUI {
   }
 
   _updateCameraOptions() {
-    const badge = this._panel?.querySelector('#pipeline-camera-badge');
-    if (!badge) return;
-    const gripIdx = (this.demo.cameraViewer && typeof this.demo.cameraViewer.getGripperCameraIndex === 'function')
-      ? this.demo.cameraViewer.getGripperCameraIndex()
-      : 0;
-    const gripCam = this.demo.cameraViewer?.cameras?.[gripIdx];
-    const name = gripCam?.displayName || gripCam?.name || 'Gripper (Wrist POV)';
-    badge.innerHTML = `<span class="pipeline-camera-icon">📷</span><span>${name}</span>`;
+    const select = this._panel?.querySelector('#pipeline-camera-select');
+    if (!select) return;
+
+    const cameras = this.demo.cameraViewer?.cameras || [];
+    if (cameras.length === 0) {
+      select.innerHTML = `
+        <option value="gripper_camera">Gripper (Wrist POV)</option>
+        <option value="overhead_camera">Overhead (Top-Down)</option>
+        <option value="front_camera">Front (Angled)</option>
+      `;
+      return;
+    }
+
+    const currentVal = select.value;
+    select.innerHTML = '';
+    for (const cam of cameras) {
+      const opt = document.createElement('option');
+      opt.value = cam.name;
+      opt.textContent = cam.displayName || cam.name;
+      select.appendChild(opt);
+    }
+
+    if (currentVal && cameras.some((c) => c.name === currentVal)) {
+      select.value = currentVal;
+    } else {
+      const gripIdx = (typeof this.demo.cameraViewer?.getGripperCameraIndex === 'function')
+        ? this.demo.cameraViewer.getGripperCameraIndex()
+        : 0;
+      const defaultCam = cameras[gripIdx] || cameras[0];
+      if (defaultCam) {
+        select.value = defaultCam.name;
+      }
+    }
   }
 
   _updatePreviewThumbnail() {
-    const lastEp = this.recorder.currentEpisodeFrames;
-    if (!lastEp || lastEp.length === 0) return;
-    const frame = lastEp[lastEp.length - 1];
-    if (!frame || !frame.image) return;
-
-    const canvas = this._panel.querySelector('#pipeline-preview-canvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const w = this.recorder.imageWidth;
-    const h = this.recorder.imageHeight;
-
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-    }
-
-    const imgData = ctx.createImageData(w, h);
-    const d = imgData.data;
-    const rgb = frame.image;
-    const len = w * h;
-    for (let i = 0; i < len; i++) {
-      d[i * 4 + 0] = rgb[i * 3 + 0];
-      d[i * 4 + 1] = rgb[i * 3 + 1];
-      d[i * 4 + 2] = rgb[i * 3 + 2];
-      d[i * 4 + 3] = 255;
-    }
-    ctx.putImageData(imgData, 0, 0);
-
-    const tag = this._panel.querySelector('#pipeline-preview-cam-name');
-    if (tag && frame.cameraName) tag.textContent = frame.cameraName;
+    // No-op: minimal UI has removed noisy inline canvas thumbnail
   }
 
   async startGeneration() {
     if (this.isRunning) return;
 
     const p = this._panel;
-    const numEpisodes = Math.max(1, parseInt(p.querySelector('#pipeline-episodes-input').value, 10) || 10);
-    const fps = parseInt(p.querySelector('#pipeline-fps-select').value, 10) || 30;
-    const resolution = parseInt(p.querySelector('#pipeline-resolution-select').value, 10) || 224;
-    const domainRand = p.querySelector('#pipeline-domain-rand-cb').checked;
-    const fastMode = p.querySelector('#pipeline-fast-mode-cb').checked;
+    const numEpisodes = Math.max(1, parseInt(p.querySelector('#pipeline-episodes-input')?.value, 10) || 5);
+    const fps = parseInt(p.querySelector('#pipeline-fps-select')?.value, 10) || 30;
+    const resolution = parseInt(p.querySelector('#pipeline-resolution-select')?.value, 10) || 224;
+    const domainRand = p.querySelector('#pipeline-domain-rand-cb')?.checked ?? true;
+    const fastMode = p.querySelector('#pipeline-fast-mode-cb')?.checked ?? true;
 
     const taskSpec = TEACHER_TASKS[this._activeTaskKey];
 
-    // Always resolve the gripper camera index
-    const gripIdx = (this.demo.cameraViewer && typeof this.demo.cameraViewer.getGripperCameraIndex === 'function')
-      ? this.demo.cameraViewer.getGripperCameraIndex()
-      : 0;
-    const gripCam = this.demo.cameraViewer?.cameras?.[gripIdx];
-    const cameraName = gripCam ? gripCam.name : 'gripper_camera';
+    // Read selected camera angle from the dropdown
+    let cameraName = p.querySelector('#pipeline-camera-select')?.value;
+    if (!cameraName) {
+      const gripIdx = (this.demo.cameraViewer && typeof this.demo.cameraViewer.getGripperCameraIndex === 'function')
+        ? this.demo.cameraViewer.getGripperCameraIndex()
+        : 0;
+      const gripCam = this.demo.cameraViewer?.cameras?.[gripIdx];
+      cameraName = gripCam ? gripCam.name : 'gripper_camera';
+    }
 
     // Configure recorder
     this.recorder.fps = fps;
@@ -463,10 +422,10 @@ export class DatasetPipelineUI {
         statusText.textContent = 'Loading scene and robot pack...';
         await window.robospaceLoadScene(taskSpec.sceneXml, taskSpec.robot, taskSpec.id);
         this._updateCameraOptions();
-        const curGripIdx = (this.demo.cameraViewer && typeof this.demo.cameraViewer.getGripperCameraIndex === 'function')
-          ? this.demo.cameraViewer.getGripperCameraIndex()
-          : 0;
-        this.recorder.cameraName = this.demo.cameraViewer?.cameras?.[curGripIdx]?.name || 'gripper_camera';
+        const selectedCam = p.querySelector('#pipeline-camera-select')?.value;
+        if (selectedCam) {
+          this.recorder.cameraName = selectedCam;
+        }
       }
 
       for (let ep = 0; ep < numEpisodes; ep++) {
@@ -525,15 +484,17 @@ export class DatasetPipelineUI {
         }
 
         this.recorder.endEpisode(success);
-        this._updatePreviewThumbnail();
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         // Update live metrics
         const progress = this.recorder.getProgress();
-        successMetric.textContent = `${Math.round(progress.successRate * 100)}%`;
-        framesMetric.textContent = progress.totalFrames.toLocaleString();
-        const estMB = (progress.totalFrames * (resolution * resolution * 3 * 0.05 / 1024 / 1024)).toFixed(1);
-        sizeMetric.textContent = `${estMB} MB`;
+        if (successMetric) successMetric.textContent = `${Math.round(progress.successRate * 100)}%`;
+        if (framesMetric) framesMetric.textContent = progress.totalFrames.toLocaleString();
+        if (sizeMetric) {
+          const estMB = (progress.totalFrames * (resolution * resolution * 3 * 0.05 / 1024 / 1024)).toFixed(1);
+          sizeMetric.textContent = `${estMB} MB`;
+        }
+        statusText.textContent = `Episode ${ep + 1}/${numEpisodes} (${Math.round(progress.successRate * 100)}% success)`;
 
         // Small pause to yield UI event loop
         await new Promise((resolve) => setTimeout(resolve, fastMode ? 30 : 200));

@@ -109,6 +109,8 @@ export class CameraViewer {
     this._cameras = [];
 
     let hasWristCamera = false;
+    let hasOverheadCamera = false;
+    let hasFrontCamera = false;
 
     if (model && model.ncam > 0) {
       const names = readNames(model, model.name_camadr, model.ncam, 'camera');
@@ -118,6 +120,12 @@ export class CameraViewer {
         const bodyId = model.cam_bodyid ? model.cam_bodyid[i] : -1;
         if (/(wrist|hand|grip|tool|ee)/i.test(camName)) {
           hasWristCamera = true;
+        }
+        if (/(overhead|top|head|birds_eye)/i.test(camName)) {
+          hasOverheadCamera = true;
+        }
+        if (/(front|workspace)/i.test(camName)) {
+          hasFrontCamera = true;
         }
         this._cameras.push({
           id: i,
@@ -130,8 +138,7 @@ export class CameraViewer {
       }
     }
 
-    // Always ensure an onboard gripper/wrist camera is available.
-    // If no native camera is dedicated to the gripper/wrist, add a virtual gripper camera.
+    // 1. Always ensure an onboard gripper/wrist camera is available.
     if (!hasWristCamera && model) {
       let siteIdx = -1;
       let siteName = '';
@@ -163,7 +170,7 @@ export class CameraViewer {
         this._cameras.push({
           id: 'gripper_pov',
           name: 'gripper_camera',
-          displayName: `Gripper Camera (${siteName})`,
+          displayName: `Gripper (${siteName})`,
           isVirtual: true,
           virtualType: 'gripper_pov',
           siteId: siteIdx,
@@ -173,13 +180,37 @@ export class CameraViewer {
         this._cameras.push({
           id: 'gripper_pov',
           name: 'gripper_camera',
-          displayName: `Gripper Camera (${bodyName})`,
+          displayName: `Gripper (${bodyName})`,
           isVirtual: true,
           virtualType: 'gripper_pov',
           bodyId: bodyIdx,
           fovy: 75,
         });
       }
+    }
+
+    // 2. Ensure Overhead / Top-Down Camera is available for birds-eye robotics perspective
+    if (!hasOverheadCamera) {
+      this._cameras.push({
+        id: 'overhead_camera',
+        name: 'overhead_camera',
+        displayName: 'Overhead (Top-Down)',
+        isVirtual: true,
+        virtualType: 'overhead',
+        fovy: 60,
+      });
+    }
+
+    // 3. Ensure Front / Angled Camera is available
+    if (!hasFrontCamera) {
+      this._cameras.push({
+        id: 'front_camera',
+        name: 'front_camera',
+        displayName: 'Front (Angled)',
+        isVirtual: true,
+        virtualType: 'front',
+        fovy: 55,
+      });
     }
 
     // Default to the gripper camera if available
@@ -195,8 +226,28 @@ export class CameraViewer {
    */
   getGripperCameraIndex() {
     if (this._cameras.length === 0) return 0;
-    const gripIdx = this._cameras.findIndex((c) => c.isVirtual || /(gripper|wrist|hand)/i.test(c.name));
+    const gripIdx = this._cameras.findIndex((c) => c.virtualType === 'gripper_pov' || /(gripper|wrist|hand)/i.test(c.name));
     return gripIdx >= 0 ? gripIdx : 0;
+  }
+
+  /**
+   * Returns the index of the camera representing the overhead/top-down POV.
+   * @returns {number}
+   */
+  getOverheadCameraIndex() {
+    if (this._cameras.length === 0) return 0;
+    const idx = this._cameras.findIndex((c) => c.virtualType === 'overhead' || /(overhead|top|head|birds_eye)/i.test(c.name));
+    return idx >= 0 ? idx : 0;
+  }
+
+  /**
+   * Returns the index of the camera representing the front/angled POV.
+   * @returns {number}
+   */
+  getFrontCameraIndex() {
+    if (this._cameras.length === 0) return 0;
+    const idx = this._cameras.findIndex((c) => c.virtualType === 'front' || /(front|workspace)/i.test(c.name));
+    return idx >= 0 ? idx : 0;
   }
 
   /**
@@ -426,6 +477,33 @@ export class CameraViewer {
 
   _updateVirtualCamera(cam, simulation, model) {
     this._threeCamera.fov = cam.fovy || 75;
+
+    if (cam.virtualType === 'overhead') {
+      // Top-down camera placed overhead looking straight down onto table/workspace
+      const cx = 0.45;
+      const cy = 0.0;
+      // In Three.js coordinates: X_three = X_mu (0.45), Y_three = Z_mu (1.25), Z_three = -Y_mu (0.0)
+      this._threeCamera.position.set(cx, 1.25, -cy);
+      this._threeCamera.up.set(1, 0, 0); // pointing forward (+X) along table
+      this._threeCamera.lookAt(new THREE.Vector3(cx, 0.0, -cy));
+      this._threeCamera.updateMatrix();
+      this._threeCamera.updateMatrixWorld(true);
+      this._threeCamera.matrixAutoUpdate = false;
+      this._threeCamera.fov = cam.fovy || 60;
+      return;
+    }
+
+    if (cam.virtualType === 'front') {
+      // Front spectator camera angled down at the workspace
+      this._threeCamera.position.set(0.95, 0.65, 0.0);
+      this._threeCamera.up.set(0, 1, 0);
+      this._threeCamera.lookAt(new THREE.Vector3(0.45, 0.08, 0.0));
+      this._threeCamera.updateMatrix();
+      this._threeCamera.updateMatrixWorld(true);
+      this._threeCamera.matrixAutoUpdate = false;
+      this._threeCamera.fov = cam.fovy || 55;
+      return;
+    }
 
     let baseX = 0, baseY = 0, baseZ = 0;
     let m = null;
