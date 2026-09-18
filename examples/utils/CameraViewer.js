@@ -108,23 +108,31 @@ export class CameraViewer {
   onModelChanged(model, simulation) {
     this._cameras = [];
 
+    let hasWristCamera = false;
+
     if (model && model.ncam > 0) {
       const names = readNames(model, model.name_camadr, model.ncam, 'camera');
       for (let i = 0; i < model.ncam; i++) {
         const fovy = (model.cam_fovy && model.cam_fovy[i] > 0) ? model.cam_fovy[i] : 45;
+        const camName = names[i] || `camera_${i}`;
+        const bodyId = model.cam_bodyid ? model.cam_bodyid[i] : -1;
+        if (/(wrist|hand|grip|tool|ee)/i.test(camName)) {
+          hasWristCamera = true;
+        }
         this._cameras.push({
           id: i,
-          name: names[i] || `camera_${i}`,
+          name: camName,
+          displayName: camName,
           isVirtual: false,
-          bodyId: model.cam_bodyid ? model.cam_bodyid[i] : -1,
+          bodyId,
           fovy,
         });
       }
     }
 
-    // If no native cameras, check if the robot has an end-effector / gripper site or link.
-    // The camera is strictly an onboard robot point-of-view (what the robot sees), NOT an external observer.
-    if (this._cameras.length === 0 && model) {
+    // Always ensure an onboard gripper/wrist camera is available.
+    // If no native camera is dedicated to the gripper/wrist, add a virtual gripper camera.
+    if (!hasWristCamera && model) {
       let siteIdx = -1;
       let siteName = '';
 
@@ -140,37 +148,55 @@ export class CameraViewer {
         }
       }
 
+      let bodyIdx = -1;
+      let bodyName = '';
+      if (model.nbody > 1 && model.name_bodyadr) {
+        const bodyNames = readNames(model, model.name_bodyadr, model.nbody, 'body');
+        const bodyMatchIdx = bodyNames.findIndex((n) => /(gripper|hand|wrist_3|wrist3|tool|ee|end_effector)/i.test(n));
+        if (bodyMatchIdx >= 0) {
+          bodyIdx = bodyMatchIdx;
+          bodyName = bodyNames[bodyMatchIdx];
+        }
+      }
+
       if (siteIdx >= 0) {
         this._cameras.push({
           id: 'gripper_pov',
-          name: `Gripper POV (${siteName})`,
+          name: 'gripper_camera',
+          displayName: `Gripper Camera (${siteName})`,
           isVirtual: true,
           virtualType: 'gripper_pov',
           siteId: siteIdx,
           fovy: 75,
         });
-      } else if (model.nbody > 1 && model.name_bodyadr) {
-        // Fallback to end-effector body link if named
-        const bodyNames = readNames(model, model.name_bodyadr, model.nbody, 'body');
-        const bodyMatchIdx = bodyNames.findIndex((n) => /(gripper|hand|wrist_3|wrist3|tool|ee|end_effector)/i.test(n));
-        if (bodyMatchIdx >= 0) {
-          this._cameras.push({
-            id: 'gripper_pov',
-            name: `Gripper POV (${bodyNames[bodyMatchIdx]})`,
-            isVirtual: true,
-            virtualType: 'gripper_pov',
-            bodyId: bodyMatchIdx,
-            fovy: 75,
-          });
-        }
+      } else if (bodyIdx >= 0) {
+        this._cameras.push({
+          id: 'gripper_pov',
+          name: 'gripper_camera',
+          displayName: `Gripper Camera (${bodyName})`,
+          isVirtual: true,
+          virtualType: 'gripper_pov',
+          bodyId: bodyIdx,
+          fovy: 75,
+        });
       }
     }
 
-    // Default to first camera
-    this._activeCameraIndex = 0;
+    // Default to the gripper camera if available
+    this._activeCameraIndex = this.getGripperCameraIndex();
     this._rebuildSelectOptions();
     this._updateButtonLabel();
     this._updateStatus();
+  }
+
+  /**
+   * Returns the index of the camera representing the gripper/wrist POV.
+   * @returns {number}
+   */
+  getGripperCameraIndex() {
+    if (this._cameras.length === 0) return 0;
+    const gripIdx = this._cameras.findIndex((c) => c.isVirtual || /(gripper|wrist|hand)/i.test(c.name));
+    return gripIdx >= 0 ? gripIdx : 0;
   }
 
   /**
@@ -286,7 +312,7 @@ export class CameraViewer {
   captureImage(renderer, scene, simulation, model, cameraId, width = 320, height = 240, format = 'numpy') {
     if (!renderer || !scene || !model || !simulation) return null;
 
-    let camIdx = 0;
+    let camIdx = this.getGripperCameraIndex();
     if (typeof cameraId === 'string') {
       const idx = this._cameras.findIndex((c) => c.name === cameraId);
       if (idx >= 0) camIdx = idx;
@@ -401,49 +427,53 @@ export class CameraViewer {
   _updateVirtualCamera(cam, simulation, model) {
     this._threeCamera.fov = cam.fovy || 75;
 
-    let px = 0, py = 0, pz = 0;
+    let baseX = 0, baseY = 0, baseZ = 0;
     let m = null;
 
     if (cam.siteId !== undefined && simulation.site_xpos && simulation.site_xmat) {
       const siteId = cam.siteId;
-      px = simulation.site_xpos[3 * siteId + 0];
-      py = simulation.site_xpos[3 * siteId + 1];
-      pz = simulation.site_xpos[3 * siteId + 2];
+      baseX = simulation.site_xpos[3 * siteId + 0];
+      baseY = simulation.site_xpos[3 * siteId + 1];
+      baseZ = simulation.site_xpos[3 * siteId + 2];
       m = simulation.site_xmat.subarray(9 * siteId, 9 * siteId + 9);
     } else if (cam.bodyId !== undefined && simulation.xpos && simulation.xmat) {
       const bodyId = cam.bodyId;
+      baseX = simulation.xpos[3 * bodyId + 0];
+      baseY = simulation.xpos[3 * bodyId + 1];
+      baseZ = simulation.xpos[3 * bodyId + 2];
       m = simulation.xmat.subarray(9 * bodyId, 9 * bodyId + 9);
-      // Offset camera 0.08m forward along tool pointing axis (Column 2 of m) to sit past palm
-      const offset = 0.08;
-      px = simulation.xpos[3 * bodyId + 0] + m[2] * offset;
-      py = simulation.xpos[3 * bodyId + 1] + m[5] * offset;
-      pz = simulation.xpos[3 * bodyId + 2] + m[8] * offset;
     }
 
     if (m) {
-      // In MuJoCo, orientation matrix m is 3x3 row-major.
-      // Column 2 (m[2], m[5], m[8]) is the tool approach/pointing direction.
-      // In Three.js, camera optical axis points along -Z:
-      //   z_cam_mujoco = -Column 2 = (-m[2], -m[5], -m[8])
-      // Camera up (+Y) is Column 1:
-      //   y_cam_mujoco = Column 1 = (m[1], m[4], m[7])
-      // Camera right (+X) is -Column 0:
-      //   x_cam_mujoco = (-m[0], -m[3], -m[6])
-      //
-      // Applying coordinate swizzle S (MuJoCo [x, y, z] -> Three.js [x, z, -y]):
-      // Row 0: -m[0],  m[1], -m[2],  px
-      // Row 1: -m[6],  m[7], -m[8],  pz
-      // Row 2:  m[3], -m[4],  m[5], -py
-      // Row 3:  0,     0,     0,     1
-      this._matrix4.set(
-        -m[0],  m[1], -m[2],  px,
-        -m[6],  m[7], -m[8],  pz,
-         m[3], -m[4],  m[5], -py,
-         0,     0,     0,     1
-      );
+      // In MuJoCo, orientation matrix m is 3x3 row-major:
+      // Column 0 = local X: [m[0], m[3], m[6]]
+      // Column 1 = local Y: [m[1], m[4], m[7]]
+      // Column 2 = local Z (tool approach axis): [m[2], m[5], m[8]]
 
-      this._threeCamera.matrix.copy(this._matrix4);
-      this._threeCamera.matrixWorld.copy(this._matrix4);
+      // Position wrist-mounted camera: mounted on wrist/hand, looking down towards fingers
+      const cZ = 0.04;
+      const cY = -0.045;
+      const px = baseX + m[2] * cZ + m[1] * cY;
+      const py = baseY + m[5] * cZ + m[4] * cY;
+      const pz = baseZ + m[8] * cZ + m[7] * cY;
+
+      // Target lookAt point: centered between the fingertips / grasp point
+      const tZ = 0.14;
+      const tx = baseX + m[2] * tZ;
+      const ty = baseY + m[5] * tZ;
+      const tz = baseZ + m[8] * tZ;
+
+      // Camera up vector in MuJoCo aligned with -local Y
+      const ux = -m[1];
+      const uy = -m[4];
+      const uz = -m[7];
+
+      // Swizzle MuJoCo (x, y, z) to Three.js (x, z, -y)
+      this._threeCamera.position.set(px, pz, -py);
+      this._threeCamera.up.set(ux, uz, -uy);
+      this._threeCamera.lookAt(new THREE.Vector3(tx, tz, -ty));
+      this._threeCamera.updateMatrix();
+      this._threeCamera.updateMatrixWorld(true);
       this._threeCamera.matrixAutoUpdate = false;
       this._threeCamera.fov = cam.fovy || 75;
     }
@@ -504,7 +534,7 @@ export class CameraViewer {
     this._cameras.forEach((cam, i) => {
       const opt = document.createElement('option');
       opt.value = String(i);
-      opt.textContent = `${cam.name} (${Math.round(cam.fovy)}°)`;
+      opt.textContent = `${cam.displayName || cam.name} (${Math.round(cam.fovy)}°)`;
       this._selectEl.appendChild(opt);
     });
     this._selectEl.value = String(this._activeCameraIndex);

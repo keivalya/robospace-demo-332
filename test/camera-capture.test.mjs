@@ -108,6 +108,24 @@ try {
   assert.deepEqual(info.features[camKey].shape, [224, 224, 3]);
   ok('LeRobotExporter standardized observation.images.<name> feature key');
 
+  // 5. Test Gripper Camera is added even when native spectator cameras exist
+  const multiCamModel = {
+    ncam: 1,
+    name_camadr: new Int32Array([0]),
+    names: new TextEncoder().encode('front_camera\0base\0hand\0'),
+    cam_bodyid: new Int32Array([-1]),
+    cam_fovy: new Float64Array([60]),
+    nbody: 2,
+    name_bodyadr: new Int32Array([13, 18]),
+  };
+  const cvMulti = new CameraViewer(null);
+  cvMulti.onModelChanged(multiCamModel, mockPandaSim);
+  assert.equal(cvMulti.cameras.length, 2);
+  const gripIdx = cvMulti.getGripperCameraIndex();
+  assert.equal(gripIdx, 1);
+  assert.equal(cvMulti.cameras[gripIdx].name, 'gripper_camera');
+  ok('gripper camera is guaranteed to be present and indexed even with native spectator cameras');
+
 } catch (err) {
   bad('Camera capture test failed', err);
 }

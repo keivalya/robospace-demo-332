@@ -23,7 +23,6 @@ export const TEACHER_TASKS = {
   <worldbody>
     <light pos="0 0 3" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="grid"/>
-    <camera name="front_camera" pos="0.85 0.0 0.45" xyaxes="0 1 0 -0.5 0 0.866" mode="fixed"/>
     <body name="cube" pos="0.5 0 0.025">
       <freejoint/>
       <geom type="box" size="0.025 0.025 0.025" rgba="0.85 0.3 0.3 1" density="300" friction="1.5 0.02 0.001"/>
@@ -94,7 +93,6 @@ robot.wait(0.5)
   <worldbody>
     <light pos="0 0 3" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="grid"/>
-    <camera name="front_camera" pos="0.85 0.0 0.45" xyaxes="0 1 0 -0.5 0 0.866" mode="fixed"/>
     <geom name="pad" pos="0.4 0.25 0.001" size="0.08 0.08 0.001" type="box" rgba="0.25 0.6 0.35 1"/>
     <body name="cube" pos="0.5 0 0.025">
       <freejoint/>
@@ -173,7 +171,6 @@ robot.wait(0.5)
   <worldbody>
     <light pos="0 0 3" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="grid"/>
-    <camera name="front_camera" pos="0.85 0.0 0.45" xyaxes="0 1 0 -0.5 0 0.866" mode="fixed"/>
     <body name="base_cube" pos="0.45 0.15 0.025">
       <freejoint/>
       <geom type="box" size="0.025 0.025 0.025" rgba="0.3 0.5 0.85 1" density="400" friction="1.5 0.02 0.001"/>

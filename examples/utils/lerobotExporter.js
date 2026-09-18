@@ -301,15 +301,18 @@ Run the included \`python load_dataset.py\` to verify dataset integrity.
    * @param {Uint8Array} rgbData
    * @param {number} width
    * @param {number} height
+   * @param {HTMLCanvasElement[]} [canvasPool]
    * @returns {Promise<Blob>}
    */
-  async rgbToJpegBlob(rgbData, width, height) {
+  async rgbToJpegBlob(rgbData, width, height, canvasPool = null) {
     if (typeof document === 'undefined') {
       return new Blob([rgbData], { type: 'image/jpeg' });
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
+    const canvas = (canvasPool && canvasPool.length > 0) ? canvasPool.pop() : document.createElement('canvas');
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
     const ctx = canvas.getContext('2d');
     const imgData = ctx.createImageData(width, height);
     const d = imgData.data;
@@ -322,7 +325,10 @@ Run the included \`python load_dataset.py\` to verify dataset integrity.
     }
     ctx.putImageData(imgData, 0, 0);
     return new Promise((resolve) => {
-      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.85);
+      canvas.toBlob((blob) => {
+        if (canvasPool) canvasPool.push(canvas);
+        resolve(blob);
+      }, 'image/jpeg', 0.85);
     });
   }
 
@@ -360,6 +366,14 @@ Run the included \`python load_dataset.py\` to verify dataset integrity.
     const totalSteps = r.episodes.length * 2;
     let stepCount = 0;
 
+    // Small pool of canvases to convert images concurrently without DOM churn
+    const canvasPool = [];
+    if (typeof document !== 'undefined') {
+      for (let p = 0; p < 8; p++) {
+        canvasPool.push(document.createElement('canvas'));
+      }
+    }
+
     for (let i = 0; i < r.episodes.length; i++) {
       const ep = r.episodes[i];
       const epNumStr = String(ep.episodeIndex).padStart(6, '0');
@@ -370,25 +384,37 @@ Run the included \`python load_dataset.py\` to verify dataset integrity.
       dataFolder.file(`episode_${epNumStr}.parquet`, parquetBuf);
 
       stepCount++;
-      if (onProgress) onProgress({ progress: stepCount / totalSteps, file: `data/episode_${epNumStr}.parquet` });
+      if (onProgress) onProgress({ progress: (stepCount / totalSteps) * 0.85, file: `data/episode_${epNumStr}.parquet` });
 
-      // 2. Image frames
-      for (let f = 0; f < ep.frames.length; f++) {
-        const frame = ep.frames[f];
-        const frameNumStr = String(frame.frame_index).padStart(6, '0');
-        if (frame.image) {
-          const blob = await this.rgbToJpegBlob(frame.image, r.imageWidth, r.imageHeight);
+      // 2. Image frames processed in parallel batches of 16
+      const BATCH_SIZE = 16;
+      for (let f = 0; f < ep.frames.length; f += BATCH_SIZE) {
+        const slice = ep.frames.slice(f, f + BATCH_SIZE);
+        await Promise.all(slice.map(async (frame) => {
+          if (!frame.image) return;
+          const frameNumStr = String(frame.frame_index).padStart(6, '0');
+          const blob = await this.rgbToJpegBlob(frame.image, r.imageWidth, r.imageHeight, canvasPool);
           videoFolder.file(`episode_${epNumStr}_frame_${frameNumStr}.jpg`, blob);
-        }
+        }));
       }
 
       stepCount++;
-      if (onProgress) onProgress({ progress: stepCount / totalSteps, file: `videos/episode_${epNumStr}` });
+      if (onProgress) onProgress({ progress: (stepCount / totalSteps) * 0.85, file: `videos/episode_${epNumStr}` });
     }
 
-    const zipBlob = await zip.generateAsync({ type: 'blob' }, (metadata) => {
-      if (onProgress) onProgress({ progress: metadata.percent / 100, file: 'Compressing archive...' });
-    });
+    // Compression: STORE is vastly faster than DEFLATE since JPEGs and parquet are already compressed
+    const zipBlob = await zip.generateAsync(
+      {
+        type: 'blob',
+        compression: 'STORE',
+      },
+      (metadata) => {
+        if (onProgress) {
+          const overallProgress = 0.85 + (metadata.percent / 100) * 0.15;
+          onProgress({ progress: overallProgress, file: 'Packaging archive...' });
+        }
+      }
+    );
 
     if (typeof window !== 'undefined' && window.document) {
       const url = URL.createObjectURL(zipBlob);
@@ -398,7 +424,7 @@ Run the included \`python load_dataset.py\` to verify dataset integrity.
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
     }
 
     return zipBlob;

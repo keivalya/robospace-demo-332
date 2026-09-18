@@ -173,8 +173,12 @@ export class DataRecorder {
     // 3. Visuals: Attached robot camera frames
     let rgbImage = null;
     let cameraIdentifier = this.cameraName;
-    if (!cameraIdentifier && demo.cameraViewer?.activeCamera) {
-      cameraIdentifier = demo.cameraViewer.activeCamera.name;
+    if (!cameraIdentifier && demo.cameraViewer) {
+      const gripIdx = typeof demo.cameraViewer.getGripperCameraIndex === 'function'
+        ? demo.cameraViewer.getGripperCameraIndex()
+        : 0;
+      const gripCam = demo.cameraViewer.cameras?.[gripIdx] || demo.cameraViewer.activeCamera;
+      cameraIdentifier = gripCam ? gripCam.name : 'gripper_camera';
       this.cameraName = cameraIdentifier;
     }
     if (demo.cameraViewer && demo.renderer && demo.scene) {
@@ -213,7 +217,7 @@ export class DataRecorder {
       jointVel,
       eePos,
       eeQuat,
-      cameraName: cameraIdentifier || 'front_camera',
+      cameraName: cameraIdentifier || 'gripper_camera',
       image: rgbImage,
     };
 

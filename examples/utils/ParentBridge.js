@@ -417,6 +417,26 @@ export class ParentBridge {
         this._send('CHALLENGES_LIST', { challenges: list }, data.id);
         break;
       }
+      case 'TOGGLE_DATASET_PANEL': {
+        const ui = this.demo.datasetPipelineUI;
+        if (!ui) {
+          this._send('ERROR', { code: 'DATASET_UI_NOT_AVAILABLE', message: 'Dataset pipeline UI not initialized' }, data.id);
+          break;
+        }
+        ui.toggle();
+        this._send('DATASET_PANEL_TOGGLED', {}, data.id);
+        break;
+      }
+      case 'OPEN_DATASET_PANEL': {
+        const ui = this.demo.datasetPipelineUI;
+        if (!ui) {
+          this._send('ERROR', { code: 'DATASET_UI_NOT_AVAILABLE', message: 'Dataset pipeline UI not initialized' }, data.id);
+          break;
+        }
+        ui.show();
+        this._send('DATASET_PANEL_OPENED', {}, data.id);
+        break;
+      }
       case 'START_DATASET_GENERATION': {
         const ui = this.demo.datasetPipelineUI;
         if (!ui) {
