@@ -677,7 +677,13 @@ export async function initializePythonEnvironment(demo) {
         };
 
         /** Drop any in-flight inference when the user hits Stop. */
-        window.robospaceVlaCancel = () => { demo.parentBridge?.cancelRequests('stopped'); };
+        // Runs from a finally block, so it must never throw: a cached older
+        // ParentBridge.js has no cancelRequests, and raising here would replace
+        // whatever real error sent us into the finally.
+        window.robospaceVlaCancel = () => {
+            const bridge = demo.parentBridge;
+            if (typeof bridge?.cancelRequests === 'function') bridge.cancelRequests('stopped');
+        };
 
         /**
          * Score the policy over N episodes of a teacher task.
@@ -886,9 +892,13 @@ def vla_observation(cameras=('front_camera', 'gripper_camera'), size=256):
 
 
 def _vla_gripper_qpos():
-    """Two finger positions, or a symmetric pair synthesised from one."""
+    """Two finger positions, or a symmetric pair synthesised from one.
+
+    Read jointInfo, not joints: model_info()['joints'] is a list of names,
+    and only jointInfo carries qposadr.
+    """
     idx = _index()
-    for j in idx['joints']:
+    for j in idx['jointInfo']:
         if 'finger' in j['name'] and j.get('qposadr') is not None:
             qpos = get_qpos()
             a = float(qpos[j['qposadr']])
