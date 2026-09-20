@@ -94,10 +94,18 @@ await vla_control_loop(_a.prompt, duration=_a.duration, execute=_a.execute, verb
 `);
       if (stats && typeof stats.toJs === 'function') stats = stats.toJs({ dict_converter: Object.fromEntries });
     } catch (err) {
-      // A failed episode is data, not a reason to abandon the run -- one
-      // unreachable IK pose should not discard the other nineteen samples.
-      error = err?.message || String(err);
-      console.warn(`[vlaBenchmark] episode ${ep} failed:`, err);
+      // Abort rather than score it. vla_control_loop counts IK failures
+      // internally instead of raising, so an exception reaching here is never a
+      // task outcome -- it is a broken bridge, an unreachable server, a 429, or
+      // a bug. Recording those as failed episodes manufactures a success rate
+      // out of infrastructure errors, and that is not a hypothetical: a run
+      // with a stale ParentBridge reported "0/10 = 0.0%" for ten identical
+      // TypeErrors, which reads exactly like a policy that cannot do the task.
+      const msg = err?.message || String(err);
+      console.error(`[vlaBenchmark] aborted at episode ${ep + 1}:`, err);
+      throw new Error(
+        `VLA benchmark aborted at episode ${ep + 1}/${episodes}: ${msg} -- ` +
+        'no success rate is reported because none was measured.');
     }
 
     const success = typeof task.evaluateSuccess === 'function'

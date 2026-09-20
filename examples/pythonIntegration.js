@@ -672,6 +672,18 @@ export async function initializePythonEnvironment(demo) {
                     'VLA inference needs the simulator running inside the RoboSpace app; ' +
                     'it is unavailable on the standalone demo page.');
             }
+            if (typeof bridge.request !== 'function') {
+                // Say what is actually wrong. index.html busts main.js with ?v=N
+                // and main.js passes that N to every dynamic import(), but a
+                // *static* import resolves without the query -- so ParentBridge.js
+                // is whatever the browser cached, possibly from before VLA existed.
+                // Bumping ?v=N cannot fix it; not caching can.
+                throw new Error(
+                    'ParentBridge has no request(): the browser is running a cached copy ' +
+                    'from before VLA support was added. Static imports are not ' +
+                    'cache-busted by the ?v=N on main.js. Serve with "npm run dev" ' +
+                    '(sends Cache-Control: no-store) and hard-reload once.');
+            }
             const payload = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
             return await bridge.request('VLA_ACT', payload);
         };
