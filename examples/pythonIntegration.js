@@ -686,11 +686,13 @@ export async function initializePythonEnvironment(demo) {
          * predicate, so a VLA number is directly comparable to a scripted-teacher
          * number on the same task rather than to a differently-posed variant.
          */
-        window.robospaceVlaBenchmark = async (taskKey, episodes, opts) => {
+        window.robospaceVlaBenchmark = async (taskKey, episodes, duration, execute) => {
             const res = await runVlaBenchmark({
                 demo,
                 taskKey,
                 episodes: episodes || 10,
+                duration: duration || 30,
+                execute: execute || 25,
                 shouldStop: () => !!window._pythonShouldStop,
                 onProgress: (p) => {
                     if (p.phase === 'episode') {
@@ -698,10 +700,16 @@ export async function initializePythonEnvironment(demo) {
                                     (p.success ? 'SUCCESS' : 'fail'));
                     }
                 },
-                ...(opts || {}),
             });
             console.log('[vla] ' + formatVlaResult(res));
-            return res;
+            // Plain primitives only -- the Python side reads these by key, and a
+            // nested JsProxy would need converting on every access.
+            return {
+                taskKey: res.taskKey, trials: res.trials, successes: res.successes,
+                rate: res.rate, ci_lo: res.ci95[0], ci_hi: res.ci95[1],
+                ikFailureRate: res.ikFailureRate, totalSteps: res.totalSteps,
+                wallSeconds: res.wallSeconds,
+            };
         };
 
         window.showCameraViewer = (nameOrId) => {
@@ -1002,15 +1010,13 @@ async def vla_benchmark(task='panda_pick_cube', episodes=10, duration=30.0, exec
     poses the policy asked for that inverse kinematics could not reach. A high
     value means the harness is the bottleneck.
     """
-    res = await window.robospaceVlaBenchmark(task, episodes,
-                                             to_js({'duration': duration, 'execute': execute},
-                                                   dict_converter=window.Object.fromEntries))
-    out = res.to_py() if hasattr(res, 'to_py') else res
-    lo, hi = out['ci95']
+    # Positional primitives only. Marshalling a dict across the Pyodide boundary
+    # would need a dict_converter, and nothing else in this prelude does that.
+    res = await window.robospaceVlaBenchmark(task, episodes, duration, execute)
     print("%s: %d/%d = %.0f%%  [95%% CI %.0f%%-%.0f%%]  IK failures %.0f%%  %.0fs"
-          % (out['taskKey'], out['successes'], out['trials'], 100 * out['rate'],
-             100 * lo, 100 * hi, 100 * out['ikFailureRate'], out['wallSeconds']))
-    return out
+          % (res.taskKey, res.successes, res.trials, 100 * res.rate,
+             100 * res.ci_lo, 100 * res.ci_hi, 100 * res.ikFailureRate, res.wallSeconds))
+    return res
 
 
 async def control_loop(fn, duration=None, hz=None):
