@@ -961,6 +961,22 @@ def _vla_quat_from_axisangle(v):
     return [math.cos(ang / 2.0), v[0]*s, v[1]*s, v[2]*s]
 
 
+# Which policy input each RoboSpace camera feeds.
+#
+# Name these explicitly. The server matches on name when it recognises one and
+# otherwise falls back to positional order, and its declared order is
+# (wrist_image, image) -- the reverse of ours. Sending our own names would take
+# the positional path and put the external view in the wrist slot and the wrist
+# view in the external slot, with no error anywhere: the policy would simply act
+# on a world it cannot see, which reads as a bad adapter rather than a bad feed.
+#
+# LIBERO trained agentview -> image and eye-in-hand -> wrist_image.
+_VLA_CAMERA_SLOTS = {
+    'front_camera': 'image',
+    'gripper_camera': 'wrist_image',
+}
+
+
 def vla_observation(cameras=('front_camera', 'gripper_camera'), size=256):
     """Build the observation dict the VLA server expects.
 
@@ -979,7 +995,8 @@ def vla_observation(cameras=('front_camera', 'gripper_camera'), size=256):
         url = camera_image(cam, size, size, 'jpeg')
         if not url:
             raise RuntimeError("camera %r produced no image" % (cam,))
-        images[cam] = url.split(',', 1)[1] if ',' in url else url
+        slot = _VLA_CAMERA_SLOTS.get(cam, cam)
+        images[slot] = url.split(',', 1)[1] if ',' in url else url
     return {'images': images, 'state': state}
 
 
