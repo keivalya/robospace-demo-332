@@ -653,6 +653,31 @@ export async function initializePythonEnvironment(demo) {
             return demo.cameraViewer.captureImage(demo.renderer, demo.scene, demo.simulation, demo.model, nameOrId, width, height, format);
         };
 
+        /**
+         * Ask the parent app to run one VLA inference.
+         *
+         * The request deliberately goes through the parent rather than straight
+         * to the inference server: this page is served from GitHub Pages, so any
+         * credential shipped here would be public. The parent is same-origin
+         * with its own API route, which holds the server token.
+         *
+         * @param {string} payloadJson  {images:{name:dataUrl}, state:number[], prompt:string}
+         * @returns {Promise<object>}   {actions: number[][], ...}
+         */
+        window.robospaceVlaAct = async (payloadJson) => {
+            const bridge = demo.parentBridge;
+            if (!bridge || !bridge.parentOrigin) {
+                throw new Error(
+                    'VLA inference needs the simulator running inside the RoboSpace app; ' +
+                    'it is unavailable on the standalone demo page.');
+            }
+            const payload = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
+            return await bridge.request('VLA_ACT', payload);
+        };
+
+        /** Drop any in-flight inference when the user hits Stop. */
+        window.robospaceVlaCancel = () => { demo.parentBridge?.cancelRequests('stopped'); };
+
         window.showCameraViewer = (nameOrId) => {
             if (demo.cameraViewer) demo.cameraViewer.show(nameOrId);
         };
@@ -781,6 +806,159 @@ def set_actuator(actuator, value):
     ctrl = list(get_control())
     ctrl[idx] = float(value)
     set_control(ctrl)
+
+def _vla_axisangle(quat):
+    """(w,x,y,z) quaternion -> 3-vector axis-angle, the layout LIBERO trains on."""
+    w, x, y, z = float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])
+    n = math.sqrt(x*x + y*y + z*z)
+    if n < 1e-8:
+        return [0.0, 0.0, 0.0]
+    angle = 2.0 * math.atan2(n, w)
+    if angle > math.pi:
+        angle -= 2.0 * math.pi
+    s = angle / n
+    return [x * s, y * s, z * s]
+
+
+def _vla_quat_from_axisangle(v):
+    """Inverse of _vla_axisangle."""
+    ang = math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2])
+    if ang < 1e-8:
+        return [1.0, 0.0, 0.0, 0.0]
+    s = math.sin(ang / 2.0) / ang
+    return [math.cos(ang / 2.0), v[0]*s, v[1]*s, v[2]*s]
+
+
+def vla_observation(cameras=('front_camera', 'gripper_camera'), size=256):
+    """Build the observation dict the VLA server expects.
+
+    State is [eef_pos(3), eef_axis_angle(3), gripper_qpos(2)] -- verified against
+    the checkpoint's training data, not guessed.
+
+    Capture happens after the caller has yielded a frame. camera_image() updates
+    the three.js camera from MuJoCo but does not re-sync body transforms, so a
+    capture taken mid-burst renders stale geometry.
+    """
+    pose = robot.get_ee_pose()
+    grip = _vla_gripper_qpos()
+    state = [float(v) for v in pose['pos']] + _vla_axisangle(pose['quat']) + grip
+    images = {}
+    for cam in cameras:
+        url = camera_image(cam, size, size, 'jpeg')
+        if not url:
+            raise RuntimeError("camera %r produced no image" % (cam,))
+        images[cam] = url.split(',', 1)[1] if ',' in url else url
+    return {'images': images, 'state': state}
+
+
+def _vla_gripper_qpos():
+    """Two finger positions, or a symmetric pair synthesised from one."""
+    idx = _index()
+    for j in idx['joints']:
+        if 'finger' in j['name'] and j.get('qposadr') is not None:
+            qpos = get_qpos()
+            a = float(qpos[j['qposadr']])
+            nxt = j['qposadr'] + 1
+            b = float(qpos[nxt]) if nxt < len(qpos) else -a
+            return [a, b]
+    return [0.0, 0.0]
+
+
+async def vla_act(prompt, cameras=('front_camera', 'gripper_camera'), size=256):
+    """One inference. Returns a list of action vectors (a chunk), or raises."""
+    obs = vla_observation(cameras, size)
+    obs['prompt'] = prompt
+    res = await window.robospaceVlaAct(json.dumps(obs))
+    actions = res.actions.to_py() if hasattr(res.actions, 'to_py') else res.actions
+    return [[float(v) for v in a] for a in actions]
+
+
+async def vla_control_loop(prompt, duration=30.0, execute=25,
+                           cameras=('front_camera', 'gripper_camera'),
+                           size=256, pos_gain=1.0, verbose=True):
+    """Drive the robot with a vision-language-action policy.
+
+        await vla_control_loop("pick up the red block")
+
+    The policy returns a chunk of 50 actions per inference. 'execute' says how
+    many of them to run before asking again -- executing the whole chunk is
+    cheapest, replanning sooner reacts better to what actually happened.
+
+    (Note: no backticks anywhere in this prelude -- it lives inside a JS
+    template literal and one would end it.)
+
+    ADAPTER, and the part most likely to need tuning: the policy emits
+    end-effector *deltas* (dx, dy, dz, droll, dpitch, dyaw, gripper), because it
+    was trained under operational-space control. This simulator drives joint
+    position targets. Each action is therefore integrated onto the current
+    end-effector pose and converted with ik_solve(). That is a different plant
+    from the one the policy learned on, so treat the transfer as something to
+    measure rather than assume.
+
+    IK failures are counted, not hidden -- a silent failure here looks exactly
+    like a policy that cannot do the task.
+    """
+    t_end = get_time() + duration
+    ik_fail = 0
+    steps = 0
+    try:
+        while get_time() < t_end:
+            await yield_control()          # settle transforms before capturing
+            chunk = await vla_act(prompt, cameras, size)
+            for action in chunk[:execute]:
+                if get_time() >= t_end:
+                    break
+                pose = robot.get_ee_pose()
+                target_pos = [float(pose['pos'][i]) + pos_gain * float(action[i])
+                              for i in range(3)]
+                rot = _vla_axisangle(pose['quat'])
+                target_rot = [rot[i] + float(action[3 + i]) for i in range(3)]
+                sol = ik_solve(robot.arm.target_frame, pos=target_pos,
+                               quat=_vla_quat_from_axisangle(target_rot))
+                if sol and sol.get('success'):
+                    move_joints_immediate(sol['joints'])
+                else:
+                    ik_fail += 1
+                if len(action) > 6:
+                    _vla_set_gripper_raw(float(action[6]))
+                steps += 1
+                await yield_control()
+    finally:
+        window.robospaceVlaCancel()
+        if verbose:
+            print("vla: %d actions, %d IK failures (%.0f%%)"
+                  % (steps, ik_fail, 100.0 * ik_fail / max(1, steps)))
+    return {'steps': steps, 'ik_failures': ik_fail}
+
+
+def move_joints_immediate(joints):
+    """Write joint targets straight to ctrl -- no ramp, no stepping.
+
+    move_joints() ramps over seconds and steps the sim itself, which would fight
+    a control loop that is already yielding frames of its own.
+    """
+    for name, value in dict(joints).items():
+        try:
+            set_actuator(name, float(value))
+        except Exception:
+            pass
+
+
+def _vla_set_gripper_raw(value01):
+    """Map the policy's [0,1] gripper onto this robot's actuator range.
+
+    Addressed by name rather than through set_gripper(), whose "the actuator
+    with no joint transmission" heuristic breaks on any model with zero or two
+    such actuators. Panda's actuator8 is 0..255 with 255 = open.
+    """
+    acts = _index()['actuators']
+    for i, a in enumerate(acts):
+        if a['joint'] is None or 'gripper' in (a['name'] or '').lower():
+            lo, hi = (a['ctrlrange'] or (0.0, 1.0))
+            v = max(0.0, min(1.0, value01))
+            set_actuator(i, lo + v * (hi - lo))
+            return
+
 
 async def control_loop(fn, duration=None, hz=None):
     """Call fn(t) every frame, where t is seconds since the loop started.
@@ -1743,6 +1921,8 @@ def help_api():
         ('move (no await needed)', ['move_to', 'move_joints', 'open_gripper', 'close_gripper',
                                     'set_gripper', 'run', 'wait', 'skip_playback', 'ik_solve']),
         ('live control (advanced, needs await)', ['control_loop', 'yield_control']),
+        ('vla policy (needs await, RoboSpace app only)',
+            ['vla_control_loop', 'vla_act', 'vla_observation']),
         ('control', ['set_control', 'get_control', 'get_actuator_ranges']),
         ('state', ['get_qpos', 'get_qvel', 'set_qpos', 'set_qvel', 'get_joint',
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),
@@ -2343,6 +2523,30 @@ export function setupPythonIDE(demo) {
 
 // Example code snippets for different scenarios
 export const PYTHON_EXAMPLES = {
+    vla_policy: `# Drive the robot with a vision-language-action model.
+#
+# The policy looks at two camera views plus the arm's own pose, reads your
+# instruction, and returns a chunk of 50 actions. It runs on a Qualcomm NPU,
+# roughly 0.6 s per chunk, so the arm moves in bursts rather than continuously.
+#
+# Requires the simulator to be running inside the RoboSpace app (the standalone
+# demo page has no way to reach the inference server), and a Franka Panda scene:
+# the policy was trained on that arm and does not transfer to others.
+
+await load_robot('franka_panda')
+
+result = await vla_control_loop(
+    "pick up the black bowl and place it on the plate",
+    duration=30.0,   # simulation seconds to keep trying
+    execute=25,      # actions to run per inference; lower replans more often
+)
+
+print(result)
+# {'steps': ..., 'ik_failures': ...}
+#
+# A high ik_failures count means the pose the policy asked for was unreachable,
+# not that the policy is confused -- try a scene where the object is closer in.
+`,
     basic_control: `# The smallest thing that moves a robot.
 #
 # set_control writes the targets; run() lets the physics play out. No await.
@@ -2742,6 +2946,7 @@ print("\\nHigh-level control completed cleanly.")`,
 // silently absent from the UI, which is how load_robot and load_scene went unlisted
 // while being two of the most useful things in the API.
 export const EXAMPLE_LABELS = {
+    vla_policy: 'VLA policy (AI control)',
     // Roughly a learning path: what is loaded -> make it move -> where things are ->
     // load a real robot -> build a scene -> manipulate -> advanced.
     info: 'What is loaded',

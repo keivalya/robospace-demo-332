@@ -8,6 +8,10 @@
 // Protocol envelope: { source: "robospace", v: 1, type, id, payload }
 //   Parent → child: HELLO, LOAD_PROJECT, NEW_PROJECT, REQUEST_SNAPSHOT, PING,
 //                   APPLY_SCENE, READ_SCENE
+//
+// Most traffic is parent→child request/response. VLA_ACT inverts that: the child
+// asks the parent to run a vision-language-action inference, because the parent
+// is same-origin with the API route that holds the server token. See request().
 //   Child  → parent: READY, LOAD_PROJECT_OK, SNAPSHOT, DIRTY, THUMBNAIL, ERROR, PONG,
 //                    SCENE_OK, SCENE_TEXT, SCENE_PROGRESS
 
@@ -24,6 +28,9 @@ const THUMBNAIL_H = 200;
 // is a structured clone across an origin boundary, so coalesce them; the last
 // file always reports regardless, so the bar still finishes at 100%.
 const PROGRESS_THROTTLE_MS = 120;
+// Inference is ~0.6s on the NPU, but the request also queues behind other users
+// and crosses a tunnel, so allow generous headroom before giving up.
+const REQUEST_TIMEOUT_MS = 20000;
 
 // Parent origins we trust. The first allowed origin we see in a HELLO becomes
 // the locked-in counterparty for the rest of the session.
@@ -160,6 +167,8 @@ export class ParentBridge {
     // live. See utils/analytics.js.
     this._onConnectedCbs = [];
     this._onStandaloneCbs = [];
+    /** @type {Map<string, {resolve: Function, reject: Function, timer: number}>} */
+    this._pending = new Map();
 
     this._onMessage = this._onMessage.bind(this);
     window.addEventListener('message', this._onMessage);
@@ -189,6 +198,50 @@ export class ParentBridge {
     } catch (e) {
       console.warn('[ParentBridge] postMessage failed:', e);
     }
+  }
+
+  /**
+   * Ask the parent for something and await its reply.
+   *
+   * This is the mirror image of the parent→child flow in simBridge.js: we mint
+   * an id, park a promise against it, and the parent echoes that id back on
+   * `<TYPE>_RESULT` or `<TYPE>_ERROR`.
+   *
+   * It exists because the child cannot hold a server credential — anything
+   * shipped to the browser from GitHub Pages is public — so network calls that
+   * need one are delegated to the parent, which is same-origin with its own API
+   * routes.
+   *
+   * @param {string} type
+   * @param {object} payload
+   * @param {number} [timeoutMs]
+   * @returns {Promise<object>}
+   */
+  request(type, payload, timeoutMs = REQUEST_TIMEOUT_MS) {
+    if (!this.parentOrigin) {
+      return Promise.reject(new Error(
+        'Not connected to a parent window. This feature needs the simulator to be ' +
+        'embedded in the RoboSpace app.'));
+    }
+    const id = `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pending.delete(id);
+        reject(new Error(`${type} timed out after ${timeoutMs} ms`));
+      }, timeoutMs);
+      this._pending.set(id, { resolve, reject, timer });
+      this._send(type, payload, id);
+    });
+  }
+
+  /** Reject every in-flight request. Called on Stop so a pending fetch cannot
+   *  resume a loop the user has already halted. */
+  cancelRequests(reason = 'cancelled') {
+    for (const [, p] of this._pending) {
+      clearTimeout(p.timer);
+      p.reject(new Error(reason));
+    }
+    this._pending.clear();
   }
 
   /** @param {() => void} cb */
@@ -248,13 +301,26 @@ export class ParentBridge {
       this._fire(this._onConnectedCbs);
       this._send('READY', {
         protocolVersion: PROTOCOL_VERSION,
-        capabilities: ['snapshot', 'thumbnail', 'sim_state'],
+        capabilities: ['snapshot', 'thumbnail', 'sim_state', 'vla'],
       });
       return;
     }
 
     // After lock-in, only accept messages from the locked origin.
     if (event.origin !== this.parentOrigin) return;
+
+    // Replies to our own request() calls, matched by the id we minted.
+    if (data.id && this._pending.has(data.id)) {
+      const pending = this._pending.get(data.id);
+      this._pending.delete(data.id);
+      clearTimeout(pending.timer);
+      if (data.type.endsWith('_ERROR')) {
+        pending.reject(new Error(data.payload?.message || 'request failed'));
+      } else {
+        pending.resolve(data.payload || {});
+      }
+      return;
+    }
 
     switch (data.type) {
       case 'PING':

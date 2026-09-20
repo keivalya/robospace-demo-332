@@ -418,7 +418,7 @@ export class CameraViewer {
     this._threeCamera.aspect = oldAspect;
     this._threeCamera.updateProjectionMatrix();
 
-    if (format === 'base64' || format === 'data_url') {
+    if (format === 'base64' || format === 'data_url' || format === 'jpeg') {
       if (!this._offscreenCanvas) {
         this._offscreenCanvas = document.createElement('canvas');
       }
@@ -440,6 +440,13 @@ export class CameraViewer {
         }
       }
       ctx.putImageData(imgData, 0, 0);
+      // JPEG for anything crossing a network. A 256x256 PNG of a rendered scene
+      // runs 3-5x larger than JPEG q85 at no visible quality cost, and the VLA
+      // server decodes either. PNG stays the default so existing callers
+      // (thumbnails, LeRobot export) are unaffected.
+      if (format === 'jpeg') {
+        return this._offscreenCanvas.toDataURL('image/jpeg', 0.85);
+      }
       return this._offscreenCanvas.toDataURL('image/png');
     }
 
