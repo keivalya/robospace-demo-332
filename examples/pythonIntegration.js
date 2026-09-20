@@ -688,6 +688,27 @@ export async function initializePythonEnvironment(demo) {
             return await bridge.request('VLA_ACT', payload);
         };
 
+        /**
+         * Whether this page can carry VLA requests, as a string rather than a
+         * boolean so the usual failure names itself instead of printing False.
+         */
+        window.robospaceVlaStatus = () => {
+            const bridge = demo.parentBridge;
+            if (!bridge) {
+                return 'standalone: not embedded in the RoboSpace app, so there is ' +
+                       'no parent to route inference through';
+            }
+            if (!bridge.parentOrigin) {
+                return 'not-connected: bridge exists but never handshook with a parent';
+            }
+            if (typeof bridge.request !== 'function') {
+                return 'stale-bridge: cached ParentBridge.js predates VLA support. ' +
+                       'Static imports are not cache-busted by the ?v=N on main.js; ' +
+                       'serve with "npm run dev" and hard-reload once';
+            }
+            return 'ready';
+        };
+
         /** Drop any in-flight inference when the user hits Stop. */
         // Runs from a finally block, so it must never throw: a cached older
         // ParentBridge.js has no cancelRequests, and raising here would replace
@@ -918,6 +939,19 @@ def _vla_gripper_qpos():
             b = float(qpos[nxt]) if nxt < len(qpos) else -a
             return [a, b]
     return [0.0, 0.0]
+
+
+def vla_ready():
+    """Check the inference path before spending episodes on it.
+
+        vla_ready()
+
+    Prints why it is not ready when it is not, which beats reading a TypeError
+    out of a stack trace. Returns True only for 'ready'.
+    """
+    status = window.robospaceVlaStatus()
+    print('vla: ' + status)
+    return status == 'ready'
 
 
 async def vla_act(prompt, cameras=('front_camera', 'gripper_camera'), size=256):
@@ -2003,7 +2037,7 @@ def help_api():
                                     'set_gripper', 'run', 'wait', 'skip_playback', 'ik_solve']),
         ('live control (advanced, needs await)', ['control_loop', 'yield_control']),
         ('vla policy (needs await, RoboSpace app only)',
-            ['vla_control_loop', 'vla_act', 'vla_observation', 'vla_benchmark']),
+            ['vla_ready', 'vla_control_loop', 'vla_act', 'vla_observation', 'vla_benchmark']),
         ('control', ['set_control', 'get_control', 'get_actuator_ranges']),
         ('state', ['get_qpos', 'get_qvel', 'set_qpos', 'set_qvel', 'get_joint',
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),
