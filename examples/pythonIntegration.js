@@ -1,5 +1,6 @@
 // pythonIntegration.js
 import * as THREE from 'three';
+import { runVlaBenchmark, formatVlaResult } from './utils/vlaBenchmark.js';
 import { getPosition, getQuaternion, readModelNames, readNames } from './mujocoUtils.js';
 import { matToQuat } from './utils/mjmath.js';
 import { solveIk } from './utils/ik.js';
@@ -678,6 +679,31 @@ export async function initializePythonEnvironment(demo) {
         /** Drop any in-flight inference when the user hits Stop. */
         window.robospaceVlaCancel = () => { demo.parentBridge?.cancelRequests('stopped'); };
 
+        /**
+         * Score the policy over N episodes of a teacher task.
+         *
+         * Reuses the teacher task's own scene, domain randomization and success
+         * predicate, so a VLA number is directly comparable to a scripted-teacher
+         * number on the same task rather than to a differently-posed variant.
+         */
+        window.robospaceVlaBenchmark = async (taskKey, episodes, opts) => {
+            const res = await runVlaBenchmark({
+                demo,
+                taskKey,
+                episodes: episodes || 10,
+                shouldStop: () => !!window._pythonShouldStop,
+                onProgress: (p) => {
+                    if (p.phase === 'episode') {
+                        console.log(`[vla] ${taskKey} ep ${p.episode + 1}/${p.episodes}: ` +
+                                    (p.success ? 'SUCCESS' : 'fail'));
+                    }
+                },
+                ...(opts || {}),
+            });
+            console.log('[vla] ' + formatVlaResult(res));
+            return res;
+        };
+
         window.showCameraViewer = (nameOrId) => {
             if (demo.cameraViewer) demo.cameraViewer.show(nameOrId);
         };
@@ -958,6 +984,33 @@ def _vla_set_gripper_raw(value01):
             v = max(0.0, min(1.0, value01))
             set_actuator(i, lo + v * (hi - lo))
             return
+
+
+async def vla_benchmark(task='panda_pick_cube', episodes=10, duration=30.0, execute=25):
+    """Score the VLA policy over N episodes and print a confidence interval.
+
+        res = await vla_benchmark('panda_pick_cube', episodes=10)
+
+    Reuses the teacher task's scene, domain randomisation and success check, so
+    the result is directly comparable to the scripted teacher on that same task.
+
+    Read the interval, not the rate. Ten episodes is a small sample -- 7/10 has a
+    95% interval of roughly 40-89%, which is wide enough that a few points
+    either way mean nothing.
+
+    'ik_failure_rate' is a property of the adapter, not the policy: it counts
+    poses the policy asked for that inverse kinematics could not reach. A high
+    value means the harness is the bottleneck.
+    """
+    res = await window.robospaceVlaBenchmark(task, episodes,
+                                             to_js({'duration': duration, 'execute': execute},
+                                                   dict_converter=window.Object.fromEntries))
+    out = res.to_py() if hasattr(res, 'to_py') else res
+    lo, hi = out['ci95']
+    print("%s: %d/%d = %.0f%%  [95%% CI %.0f%%-%.0f%%]  IK failures %.0f%%  %.0fs"
+          % (out['taskKey'], out['successes'], out['trials'], 100 * out['rate'],
+             100 * lo, 100 * hi, 100 * out['ikFailureRate'], out['wallSeconds']))
+    return out
 
 
 async def control_loop(fn, duration=None, hz=None):
@@ -1922,7 +1975,7 @@ def help_api():
                                     'set_gripper', 'run', 'wait', 'skip_playback', 'ik_solve']),
         ('live control (advanced, needs await)', ['control_loop', 'yield_control']),
         ('vla policy (needs await, RoboSpace app only)',
-            ['vla_control_loop', 'vla_act', 'vla_observation']),
+            ['vla_control_loop', 'vla_act', 'vla_observation', 'vla_benchmark']),
         ('control', ['set_control', 'get_control', 'get_actuator_ranges']),
         ('state', ['get_qpos', 'get_qvel', 'set_qpos', 'set_qvel', 'get_joint',
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),
