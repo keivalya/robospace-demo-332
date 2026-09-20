@@ -654,11 +654,55 @@ export async function initializePythonEnvironment(demo) {
             return demo.cameraViewer.captureImage(demo.renderer, demo.scene, demo.simulation, demo.model, nameOrId, width, height, format);
         };
 
+        // ─── VLA transport ────────────────────────────────────────────────
+        //
+        // Self-contained on purpose. The obvious implementation is
+        // demo.parentBridge.request('VLA_ACT', payload), and that is what this
+        // used to do -- but ParentBridge.js is a *static* import in main.js, so
+        // it resolves without the ?v=N that index.html puts on main.js and the
+        // browser serves whatever it cached. A ParentBridge from before VLA
+        // existed has no request(), which surfaced as "bridge.request is not a
+        // function" on an object that plainly defines it, and survived repeated
+        // hard reloads.
+        //
+        // Bumping ?v=N cannot fix that, so do not depend on it: this file *is*
+        // reliably busted (main.js imports it dynamically through versioned()),
+        // and postMessage correlation is about fifteen lines. The protocol is
+        // the same one ParentBridge.request uses -- mint an id, park a promise,
+        // the parent echoes the id back on VLA_ACT_RESULT or VLA_ACT_ERROR.
+        const VLA_PROTOCOL_VERSION = 1;
+        const VLA_TIMEOUT_MS = 20000;
+        const vlaPending = new Map();
+        let vlaListening = false;
+
+        const vlaListen = () => {
+            if (vlaListening) return;
+            vlaListening = true;
+            window.addEventListener('message', (event) => {
+                // Re-read the origin per message rather than capturing it: the
+                // handshake may complete after the first send is queued.
+                const origin = demo.parentBridge && demo.parentBridge.parentOrigin;
+                if (!origin || event.origin !== origin) return;
+                const d = event.data;
+                if (!d || d.source !== 'robospace') return;
+                if (d.type !== 'VLA_ACT_RESULT' && d.type !== 'VLA_ACT_ERROR') return;
+                const entry = vlaPending.get(d.id);
+                if (!entry) return;
+                vlaPending.delete(d.id);
+                clearTimeout(entry.timer);
+                if (d.type === 'VLA_ACT_ERROR') {
+                    entry.reject(new Error((d.payload && d.payload.message) || 'inference failed'));
+                } else {
+                    entry.resolve(d.payload || {});
+                }
+            });
+        };
+
         /**
          * Ask the parent app to run one VLA inference.
          *
-         * The request deliberately goes through the parent rather than straight
-         * to the inference server: this page is served from GitHub Pages, so any
+         * The request goes through the parent rather than straight to the
+         * inference server: this page is served from GitHub Pages, so any
          * credential shipped here would be public. The parent is same-origin
          * with its own API route, which holds the server token.
          *
@@ -667,30 +711,41 @@ export async function initializePythonEnvironment(demo) {
          */
         window.robospaceVlaAct = async (payloadJson) => {
             const bridge = demo.parentBridge;
-            if (!bridge || !bridge.parentOrigin) {
+            const parentOrigin = bridge && bridge.parentOrigin;
+            if (!parentOrigin) {
                 throw new Error(
                     'VLA inference needs the simulator running inside the RoboSpace app; ' +
                     'it is unavailable on the standalone demo page.');
             }
-            if (typeof bridge.request !== 'function') {
-                // Say what is actually wrong. index.html busts main.js with ?v=N
-                // and main.js passes that N to every dynamic import(), but a
-                // *static* import resolves without the query -- so ParentBridge.js
-                // is whatever the browser cached, possibly from before VLA existed.
-                // Bumping ?v=N cannot fix it; not caching can.
-                throw new Error(
-                    'ParentBridge has no request(): the browser is running a cached copy ' +
-                    'from before VLA support was added. Static imports are not ' +
-                    'cache-busted by the ?v=N on main.js. Serve with "npm run dev" ' +
-                    '(sends Cache-Control: no-store) and hard-reload once.');
-            }
             const payload = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
-            return await bridge.request('VLA_ACT', payload);
+            vlaListen();
+            const id = 'vla_' + Date.now().toString(36) + '_' +
+                       Math.random().toString(36).slice(2, 8);
+            return await new Promise((resolve, reject) => {
+                const timer = setTimeout(() => {
+                    vlaPending.delete(id);
+                    reject(new Error('VLA_ACT timed out after ' + VLA_TIMEOUT_MS + ' ms'));
+                }, VLA_TIMEOUT_MS);
+                vlaPending.set(id, { resolve, reject, timer });
+                try {
+                    window.parent.postMessage({
+                        source: 'robospace',
+                        v: VLA_PROTOCOL_VERSION,
+                        type: 'VLA_ACT',
+                        id: id,
+                        payload: payload,
+                    }, parentOrigin);
+                } catch (e) {
+                    clearTimeout(timer);
+                    vlaPending.delete(id);
+                    reject(e);
+                }
+            });
         };
 
         /**
          * Whether this page can carry VLA requests, as a string rather than a
-         * boolean so the usual failure names itself instead of printing False.
+         * boolean so a failure names itself instead of printing False.
          */
         window.robospaceVlaStatus = () => {
             const bridge = demo.parentBridge;
@@ -701,21 +756,25 @@ export async function initializePythonEnvironment(demo) {
             if (!bridge.parentOrigin) {
                 return 'not-connected: bridge exists but never handshook with a parent';
             }
-            if (typeof bridge.request !== 'function') {
-                return 'stale-bridge: cached ParentBridge.js predates VLA support. ' +
-                       'Static imports are not cache-busted by the ?v=N on main.js; ' +
-                       'serve with "npm run dev" and hard-reload once';
-            }
             return 'ready';
         };
 
-        /** Drop any in-flight inference when the user hits Stop. */
-        // Runs from a finally block, so it must never throw: a cached older
-        // ParentBridge.js has no cancelRequests, and raising here would replace
-        // whatever real error sent us into the finally.
+        /**
+         * Drop any in-flight inference when the user hits Stop.
+         *
+         * Rejects our own pending map rather than calling into ParentBridge, for
+         * the same reason robospaceVlaAct does not: that module cannot be
+         * cache-busted. It also runs from a finally block, so it must not throw
+         * -- raising here would replace whatever real error sent us there, which
+         * is exactly how a gripper TypeError once got reported as a missing
+         * cancelRequests.
+         */
         window.robospaceVlaCancel = () => {
-            const bridge = demo.parentBridge;
-            if (typeof bridge?.cancelRequests === 'function') bridge.cancelRequests('stopped');
+            for (const [, p] of vlaPending) {
+                clearTimeout(p.timer);
+                p.reject(new Error('stopped'));
+            }
+            vlaPending.clear();
         };
 
         /**
