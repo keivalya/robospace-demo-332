@@ -961,6 +961,220 @@ def _vla_quat_from_axisangle(v):
     return [math.cos(ang / 2.0), v[0]*s, v[1]*s, v[2]*s]
 
 
+# ---- SO-101 -----------------------------------------------------------------
+#
+# The SO-101 path is much simpler than the Panda one below, because the
+# embodiment happens to match the simulator: these policies emit six ABSOLUTE
+# JOINT TARGETS and this simulator drives joint targets. So there is no
+# operational-space adapter, no IK inside the control loop, and no gripper
+# special case -- the gripper is joint six.
+#
+# What is NOT simple is the contract. Each public checkpoint declares its own
+# camera names, camera order, capture aspect and action units, and none of that
+# is stated on any model card. Used zero-shot we cannot move the policy toward
+# us, so we have to satisfy its contract exactly, which is why it lives here as
+# data rather than as assumptions spread through the code. Read the values with
+# bench/survey_so101.py in the vla_model repo.
+
+_SO101_JOINTS = ('shoulder_pan', 'shoulder_lift', 'elbow_flex',
+                 'wrist_flex', 'wrist_roll', 'gripper')
+
+_VLA_PROFILES = {
+    # szk1ck/so101-pickplace-sim-mujoco -- ACT, Apache-2.0, trained in MuJoCo on
+    # 5000 episodes / 2.38M frames. Its actions are already RADIANS, so the
+    # checkpoint and the MJCF agree and no unit conversion happens at all. That
+    # removes the single largest silent-failure risk on this path.
+    'so101-act-radians': {
+        'cameras': (('front', 'front'), ('wrist_cam', 'wrist')),
+        'capture': (640, 480),          # its features are [3, 480, 640], 4:3
+        'units': 'radians',
+        'prompt': 'pick_and_place',     # ACT ignores text; kept for the record
+    },
+    # taehunkim/so101_smolvla_sim_pick_cube -- SmolVLA fine-tune, language
+    # conditioned. Its config declares generic camera1/2/3; the mapping back to
+    # top/wrist/front exists ONLY in the saved preprocessor rename_map, and
+    # server/policy.py does not apply it, so we must send the policy-side names.
+    'so101-smolvla-norm': {
+        'cameras': (('top', 'camera1'), ('wrist_cam', 'camera2'), ('front', 'camera3')),
+        'capture': (256, 256),          # its features are [3, 256, 256], 1:1
+        'units': 'normalized',
+        'prompt': 'pick up the cube and place it in the bowl',
+    },
+}
+
+_VLA_PROFILE = 'so101-act-radians'
+
+
+def vla_profile(name=None):
+    """Select, or report, which checkpoint contract the sim should satisfy.
+
+        vla_profile()                        # report the active one
+        vla_profile('so101-smolvla-norm')    # switch
+
+    Exists so several candidates can be measured through one harness instead of
+    one being hardcoded.
+    """
+    global _VLA_PROFILE
+    if name is not None:
+        if name not in _VLA_PROFILES:
+            raise ValueError('unknown profile %r. Have: %s'
+                             % (name, ', '.join(sorted(_VLA_PROFILES))))
+        _VLA_PROFILE = name
+    out = dict(_VLA_PROFILES[_VLA_PROFILE])
+    out['name'] = _VLA_PROFILE
+    return out
+
+
+def _vla_is_so101():
+    """True when the loaded model is an SO-101, by exact actuator names."""
+    return tuple(a['name'] for a in _index()['actuators']) == _SO101_JOINTS
+
+
+def _vla_ctrl_ranges():
+    """(lo, hi) per joint, in MJCF units, in _SO101_JOINTS order."""
+    acts = {a['name']: a for a in _index()['actuators']}
+    out = []
+    for name in _SO101_JOINTS:
+        a = acts.get(name)
+        if a is None or not a.get('ctrlrange'):
+            raise RuntimeError('actuator %r missing or unlimited; not an SO-101?' % (name,))
+        out.append((float(a['ctrlrange'][0]), float(a['ctrlrange'][1])))
+    return out
+
+
+def _vla_joint_positions():
+    """The six joint positions, in MJCF units (radians)."""
+    info = {j['name']: j for j in _index()['jointInfo']}
+    qpos = get_qpos()
+    out = []
+    for name in _SO101_JOINTS:
+        j = info.get(name)
+        if j is None or j.get('qposadr') is None:
+            raise RuntimeError('joint %r not found; is an SO-101 loaded?' % (name,))
+        out.append(float(qpos[j['qposadr']]))
+    return out
+
+
+# LeRobot SO-101 followers report joint values NORMALIZED -- roughly -100..100
+# for the revolute joints and 0..100 for the gripper -- while every SO-101 MJCF
+# is in radians. The SO-ARM100 README says outright that this mapping "is not
+# yet reflected in the current URDF and MuJoCo files", so it has to be applied
+# here, per joint, against the real ctrlrange. Getting it wrong produces
+# plausible-looking motion and no error anywhere, which is the same failure mode
+# as a swapped camera.
+
+def _vla_to_radians(action, units):
+    if units == 'radians':
+        return [float(v) for v in action]
+    if units != 'normalized':
+        raise ValueError('unknown units %r' % (units,))
+    out = []
+    for i, (lo, hi) in enumerate(_vla_ctrl_ranges()):
+        v = float(action[i])
+        frac = (v / 100.0) if i == 5 else ((v + 100.0) / 200.0)
+        out.append(lo + max(0.0, min(1.0, frac)) * (hi - lo))
+    return out
+
+
+def _vla_from_radians(state, units):
+    if units == 'radians':
+        return [float(v) for v in state]
+    if units != 'normalized':
+        raise ValueError('unknown units %r' % (units,))
+    out = []
+    for i, (lo, hi) in enumerate(_vla_ctrl_ranges()):
+        span = (hi - lo) or 1.0
+        frac = (float(state[i]) - lo) / span
+        out.append(frac * 100.0 if i == 5 else frac * 200.0 - 100.0)
+    return out
+
+
+def _vla_assert_in_range(ctrl):
+    """Fail loudly on an out-of-range target rather than clamping it.
+
+    A clamp would hide a units mismatch as slightly-wrong motion. This is the
+    one place the conversion can be wrong, so it is the one place that checks.
+    """
+    bad = []
+    for i, ((lo, hi), v) in enumerate(zip(_vla_ctrl_ranges(), ctrl)):
+        if not (lo - 1e-4 <= v <= hi + 1e-4):
+            bad.append('%s=%.4f outside [%.4f, %.4f]' % (_SO101_JOINTS[i], v, lo, hi))
+    if bad:
+        raise ValueError('joint target out of ctrlrange: ' + '; '.join(bad)
+                         + '. That is a units mismatch, not a near miss -- check '
+                         + 'vla_profile() against the checkpoint config.')
+
+
+def vla_observation_so101(size=None):
+    """Build the observation an SO-101 checkpoint expects.
+
+    State is the six joint positions, converted into the checkpoint's units.
+    Images are captured at the profile's aspect ratio, which matters: the policy
+    letterboxes with aspect preserved, so feeding a square frame to a 4:3-trained
+    checkpoint changes both the padding and the apparent object scale.
+    """
+    prof = vla_profile()
+    if not _vla_is_so101():
+        raise RuntimeError('not an SO-101. Actuators: '
+                           + ', '.join(a['name'] for a in _index()['actuators']))
+    state = _vla_from_radians(_vla_joint_positions(), prof['units'])
+    w, h = prof['capture'] if size is None else (size, size)
+    images = {}
+    for cam, key in prof['cameras']:
+        url = camera_image(cam, w, h, 'jpeg')
+        if not url:
+            raise RuntimeError('camera %r produced no image' % (cam,))
+        images[key] = url.split(',', 1)[1] if ',' in url else url
+    return {'images': images, 'state': state}
+
+
+async def vla_act_so101(prompt=None, size=None):
+    """One SO-101 inference. Returns a chunk of 6-D joint targets."""
+    prof = vla_profile()
+    obs = vla_observation_so101(size=size)
+    obs['prompt'] = prof['prompt'] if prompt is None else prompt
+    res = await window.robospaceVlaAct(json.dumps(obs))
+    actions = res.actions.to_py() if hasattr(res.actions, 'to_py') else res.actions
+    return [[float(v) for v in a] for a in actions]
+
+
+async def vla_control_loop_so101(prompt=None, duration=30.0, execute=10,
+                                 size=None, verbose=True):
+    """Drive the SO-101 with a VLA policy, in joint space.
+
+        await vla_control_loop_so101()
+
+    'execute' is 10, not the whole chunk, and that is the single most important
+    number here. SmolVLA's own paper measures executing 50 actions before
+    re-observing at 51.8% against 82.8% at 10 on LIBERO, and LeRobot #4614
+    replicates it at p=2e-7. The 50-action default upstream is a latency choice,
+    not an accuracy one.
+    """
+    prof = vla_profile()
+    if prompt is None:
+        prompt = prof['prompt']
+    t_end = get_time() + duration
+    steps = 0
+    try:
+        while get_time() < t_end:
+            await yield_control()        # settle transforms before capturing
+            chunk = await vla_act_so101(prompt, size=size)
+            for action in chunk[:execute]:
+                if get_time() >= t_end:
+                    break
+                ctrl = _vla_to_radians(action, prof['units'])
+                _vla_assert_in_range(ctrl)
+                set_control(ctrl)
+                steps += 1
+                await yield_control()
+    finally:
+        window.robospaceVlaCancel()
+        if verbose:
+            print('vla: %d actions, execute=%d, profile %s'
+                  % (steps, execute, prof['name']))
+    return {'steps': steps, 'execute': execute, 'profile': prof['name']}
+
+
 # Which policy input each RoboSpace camera feeds.
 #
 # Name these explicitly. The server matches on name when it recognises one and
@@ -1022,12 +1236,41 @@ def vla_ready():
 
         vla_ready()
 
-    Prints why it is not ready when it is not, which beats reading a TypeError
-    out of a stack trace. Returns True only for 'ready'.
+    Reports the transport, the robot and the active checkpoint profile, because
+    all three have to line up and each fails differently.
     """
     status = window.robospaceVlaStatus()
-    print('vla: ' + status)
-    return status == 'ready'
+    print('vla: transport ' + status)
+    ok = status == 'ready'
+
+    try:
+        acts = [a['name'] for a in _index()['actuators']]
+    except Exception as e:
+        print('vla: robot     no model loaded (%s)' % (e,))
+        return False
+
+    if _vla_is_so101():
+        prof = vla_profile()
+        cams = camera_names()
+        want = [c for c, _ in prof['cameras']]
+        missing = [c for c in want if c not in cams]
+        print('vla: robot     SO-101 (6 joints, radians)')
+        print('vla: profile   %s  units=%s  capture=%dx%d'
+              % (prof['name'], prof['units'], prof['capture'][0], prof['capture'][1]))
+        print('vla: cameras   %s -> %s' % (want, [k for _, k in prof['cameras']]))
+        if missing:
+            # captureImage silently substitutes the wrist view for an unknown
+            # name, so a missing camera feeds the policy duplicate frames rather
+            # than raising. SEVO measured one misplaced camera taking SmolVLA
+            # from 79% to 12%.
+            print('vla: MISSING   %s -- available: %s' % (missing, cams))
+            ok = False
+    else:
+        print('vla: robot     NOT an SO-101 -- VLA control is SO-101 only.')
+        print('vla:           actuators: %s' % (', '.join(acts),))
+        ok = False
+
+    return ok
 
 
 async def vla_act(prompt, cameras=('front_camera', 'gripper_camera'), size=256):
@@ -2113,7 +2356,8 @@ def help_api():
                                     'set_gripper', 'run', 'wait', 'skip_playback', 'ik_solve']),
         ('live control (advanced, needs await)', ['control_loop', 'yield_control']),
         ('vla policy (needs await, RoboSpace app only)',
-            ['vla_ready', 'vla_control_loop', 'vla_act', 'vla_observation', 'vla_benchmark']),
+            ['vla_ready', 'vla_profile', 'vla_control_loop_so101', 'vla_act_so101',
+             'vla_observation_so101', 'vla_benchmark']),
         ('control', ['set_control', 'get_control', 'get_actuator_ranges']),
         ('state', ['get_qpos', 'get_qvel', 'set_qpos', 'set_qvel', 'get_joint',
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),

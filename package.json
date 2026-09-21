@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "node tools/dev-server.mjs",
+    "test:prelude": "python3 tools/check-prelude.py",
     "test": "node --import ./test/register.mjs test/compile-diagnostics.test.mjs",
     "test:inputs": "node --import ./test/register.mjs test/scene-writer-inputs.test.mjs",
     "test:bridge": "node --import ./test/register.mjs test/parent-bridge.test.mjs",
