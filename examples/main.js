@@ -1231,7 +1231,7 @@ console.log('[robospace] ready');
 window.robospaceListRobots = () => {
   // Static import would be cleaner, but keeping the manifest out of the initial
   // module graph avoids paying for it on a page load that never loads a robot.
-  return ['franka_panda', 'stretch_3'];
+  return ['franka_panda', 'stretch_3', 'robotstudio_so101'];
 };
 
 // These loaders are driven from the Python editor as often as from the console, and a

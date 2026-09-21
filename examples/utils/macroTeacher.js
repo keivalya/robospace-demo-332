@@ -240,6 +240,124 @@ robot.wait(0.5)
     },
   },
 
+  // SO-101 (SO-ARM101). The one robot the VLA path targets.
+  //
+  // Scene fidelity is the whole game here, because the policy is used zero-shot:
+  // we cannot move it toward our simulator, so the simulator has to move toward
+  // it. Three constraints shaped every number below.
+  //
+  // 1. Reach, measured not assumed. Sampling 60k random joint configurations in
+  //    desktop MuJoCo and tracking the moving jaw gives a reachable envelope of
+  //    x [-0.267, 0.407], max horizontal radius 0.409 m. Against that, a target
+  //    at x=0.22 is approachable to within 9.5 mm, and 0.19-0.35 all come within
+  //    12 mm. Menagerie's own scene_box.xml parks the block at x=0.5, which the
+  //    jaw misses by 105 mm -- unreachable. Its `pickup` keyframe grasps at
+  //    x=0.219 instead, which is the giveaway. Randomising in [0.19, 0.25] keeps
+  //    every episode physically solvable; the shipped 0.5 would have scored 0%
+  //    for a reason that has nothing to do with the policy.
+  // 2. Textures. This WASM build cannot load a single image-file texture (see
+  //    stripFileTextures), so every material here is procedural `builtin` or flat
+  //    rgba -- deliberately byte-identical to Menagerie's own so101 scene.xml,
+  //    which is in turn the same canonical scene as panda_pick_cube above.
+  // 3. Cameras are declared, not synthesised. CameraViewer only invents a camera
+  //    for a category the MJCF leaves empty, and its virtual poses are hardcoded
+  //    at Panda table scale (0.45-0.95 m), which is wrong for a 0.4 m arm. Naming
+  //    them also avoids captureImage's silent fallback: an unknown camera name
+  //    returns the wrist view rather than erroring.
+  //    so101.xml's own wrist_cam is left alone on purpose -- it specifies
+  //    intrinsics (sensorsize/focal) rather than fovy, but MuJoCo derives
+  //    cam_fovy from them at compile time (verified: 48.46), so CameraViewer's
+  //    `cam_fovy > 0` check passes and no fallback occurs.
+  //
+  // The bowl is present but not scored. Both candidate checkpoints were trained
+  // on pick-AND-place ("pick up the cube and place it in the bowl"), so a bare
+  // block would be out of distribution even though we score only the lift.
+  so101_pick_block: {
+    id: 'so101_pick_block',
+    name: 'SO-101 Pick Block',
+    robot: 'robotstudio_so101',
+    description: 'pick up the cube and place it in the bowl',
+    sceneXml: `<mujoco model="so101_pick_block">
+  <include file="so101.xml"/>
+  <compiler angle="radian" autolimits="true"/>
+  <option integrator="implicitfast" timestep="0.005" cone="elliptic" impratio="10"/>
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="160" elevation="-20"/>
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+  </asset>
+  <worldbody>
+    <light pos="0 0 3.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane"/>
+    <camera name="top" pos="0.20 0 0.45" fovy="45"/>
+    <camera name="front" pos="0.45 0 0.35" zaxis="0.5 0 0.866" fovy="45"/>
+    <body name="cube" pos="0.22 0 0.03">
+      <freejoint/>
+      <geom type="box" name="cube" size="0.02 0.02 0.03" condim="3" friction="1 .03 .003" rgba="0 1 0 1" solref="0.01 1"/>
+    </body>
+    <body name="bowl" pos="0.20 0.13 0.01">
+      <geom type="cylinder" name="bowl" size="0.045 0.01" rgba="0.85 0.85 0.88 1"/>
+    </body>
+  </worldbody>
+</mujoco>`,
+    domainRandomization: {
+      // Kept well inside the ~315 mm reach, and off the bowl.
+      cube: { x: [0.19, 0.25], y: [-0.06, 0.04], z: 0.03, yaw: [-0.4, 0.4] },
+    },
+    pythonScript: `# Privileged Teacher Policy: SO-101 Pick Block
+#
+# Drives the gripper by ACTUATOR NAME. robot.open_gripper() cannot work on this
+# arm: set_gripper() identifies the gripper as "the actuator driving no single
+# joint" (tendon-driven, as on Panda), but all six SO-101 actuators declare an
+# explicit joint= -- so it finds zero candidates, raises, and GripperComponent
+# swallows the exception with a printed note. The result is a silent no-op.
+#
+# 0.7277 is not a guess: it is ctrl[5] from Menagerie's own 'pickup' keyframe,
+# i.e. the value at which this gripper is holding this block.
+import numpy as np
+
+GRIP_OPEN, GRIP_GRASP = 1.5, 0.7277
+
+cube = sim.get_exact_object_pose("cube")
+cx, cy, cz = (float(cube["pos"][i]) for i in range(3))
+
+set_actuator('gripper', GRIP_OPEN)
+run(0.4)
+robot.reach_pose(cx, cy, cz + 0.10, quat=tool_down(), seconds=1.0)
+robot.reach_pose(cx, cy, cz + 0.01, quat=tool_down(), seconds=0.8)
+set_actuator('gripper', GRIP_GRASP)
+run(0.6)
+robot.reach_pose(cx, cy, cz + 0.12, quat=tool_down(), seconds=1.0)
+robot.wait(0.5)
+`,
+    evaluateSuccess(sim, model) {
+      // Lift only. The cube rests with its centre at z=0.03 (half-height 0.03),
+      // so 0.08 is ~5 cm of unambiguous clearance -- scaled to a 0.3 m arm
+      // rather than reusing Panda's 0.12.
+      if (!sim || !model) return false;
+      let cubeZ = 0;
+      if (model.name_bodyadr) {
+        for (let i = 0; i < model.nbody; i++) {
+          const adr = model.name_bodyadr[i];
+          let name = '';
+          while (model.names[adr + name.length] && model.names[adr + name.length] !== 0) {
+            name += String.fromCharCode(model.names[adr + name.length]);
+          }
+          if (name === 'cube') {
+            cubeZ = sim.xpos[3 * i + 2];
+            break;
+          }
+        }
+      }
+      return cubeZ > 0.08;
+    },
+  },
+
   ur5e_reach_beacon: {
     id: 'ur5e_reach_beacon',
     name: 'UR5e — Reach Target Beacon',

@@ -24,6 +24,13 @@ const JSDELIVR_FILE_LIMIT = 20 * 1024 * 1024;
 const PACKS = {
   franka_panda: { upstreamDir: 'franka_emika_panda', entry: 'panda.xml' },
   stretch_3: { upstreamDir: 'hello_robot_stretch_3', entry: 'stretch.xml' },
+  // SO-101 (SO-ARM101). `entry` is the robot file, not scene.xml -- the scene
+  // wrapper is what MENAGERIE_MODELS points at, but a pack has to be
+  // includable from a generated task scene. Present at the pinned COMMIT
+  // already, so no pin move is needed. All 19 assets are STL and none of its
+  // XMLs declares a `<texture file=>`, which matters because this WASM build
+  // cannot load image-file textures at all (see stripFileTextures).
+  robotstudio_so101: { upstreamDir: 'robotstudio_so101', entry: 'so101.xml' },
 };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
