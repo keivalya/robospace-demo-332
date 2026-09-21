@@ -321,6 +321,13 @@ robot.wait(0.5)
 # i.e. the value at which this gripper is holding this block.
 import numpy as np
 
+# Name the end-effector frame. robot.reach_pose() would silently aim at the
+# WRONG one: ArmComponent.target_frame looks for 'attachment_site', which this
+# model does not have, and then falls back to the FIRST site -- and so101.xml
+# declares 'baseframe' before 'gripperframe'. So the default resolves to the
+# robot's fixed base, and IK would be asked to move something that cannot move.
+TCP = 'site:gripperframe'
+
 GRIP_OPEN, GRIP_GRASP = 1.5, 0.7277
 
 cube = sim.get_exact_object_pose("cube")
@@ -328,12 +335,12 @@ cx, cy, cz = (float(cube["pos"][i]) for i in range(3))
 
 set_actuator('gripper', GRIP_OPEN)
 run(0.4)
-robot.reach_pose(cx, cy, cz + 0.10, quat=tool_down(), seconds=1.0)
-robot.reach_pose(cx, cy, cz + 0.01, quat=tool_down(), seconds=0.8)
+move_to(TCP, pos=[cx, cy, cz + 0.10], quat=tool_down(), seconds=1.0)
+move_to(TCP, pos=[cx, cy, cz + 0.01], quat=tool_down(), seconds=0.8)
 set_actuator('gripper', GRIP_GRASP)
 run(0.6)
-robot.reach_pose(cx, cy, cz + 0.12, quat=tool_down(), seconds=1.0)
-robot.wait(0.5)
+move_to(TCP, pos=[cx, cy, cz + 0.12], quat=tool_down(), seconds=1.0)
+run(0.5)
 `,
     evaluateSuccess(sim, model) {
       // Lift only. The cube rests with its centre at z=0.03 (half-height 0.03),
