@@ -782,32 +782,67 @@ export async function downloadExampleScenesFolder(mujoco) {
     "universal_robots_ur5e/ur5e.xml"
   ];
 
-  let requests = allFiles.map((url) => fetch("./examples/scenes/" + url));
-  let responses = await Promise.all(requests);
   const failed = [];
-  for (let i = 0; i < responses.length; i++) {
+
+  // Bounded concurrency, and each body is consumed before the next request is
+  // issued on that worker.
+  //
+  // The previous version started all 23 fetches, awaited Promise.all, and only
+  // then read the bodies in a loop. That deadlocks over a real network. A
+  // browser allows ~6 connections per host; fetch() resolves as soon as the
+  // *headers* arrive, but the connection is not released until the *body* is
+  // consumed. So Promise.all waits for 23 sets of headers, requests 7+ wait for
+  // a free connection, and the connections are pinned by bodies nobody has read
+  // yet. The browser buffers the small responses and frees those sockets, which
+  // is why it partly works: in the failure we diagnosed, the server logged 17
+  // of 23 completed and the remaining 6 never arrived at all, and the app died
+  // on its 30 s boot timeout.
+  //
+  // It never showed up locally because on loopback every response completes
+  // before the buffers can saturate.
+  const CONCURRENCY = 4;
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= allFiles.length) return;
+      const rel = allFiles[i];
+      let res;
+      try {
+        res = await fetch("./examples/scenes/" + rel);
+      } catch (e) {
+        failed.push(`${rel} (${e && e.message ? e.message : e})`);
+        continue;
+      }
       // Check the status. Without this, a 404 or 500 writes the server's error page
       // *body* into scene.xml or a .obj, and the failure resurfaces much later as an
       // inexplicable MJCF_COMPILE_ERROR pointing at the wrong thing entirely. Skip
       // the file instead: a missing asset produces a compile error that names it.
-      if (!responses[i].ok) {
-          failed.push(`${allFiles[i]} (HTTP ${responses[i].status})`);
-          continue;
+      if (!res.ok) {
+        failed.push(`${rel} (HTTP ${res.status})`);
+        continue;
       }
-      let split = allFiles[i].split("/");
+
+      // Read the body here, which is what frees the connection for the next
+      // request. Everything after this await is synchronous, so the
+      // analyzePath/mkdir/writeFile sequence cannot interleave with another
+      // worker and needs no locking.
+      const binary = rel.endsWith(".png") || rel.endsWith(".stl") || rel.endsWith(".skn");
+      const data = binary
+        ? new Uint8Array(await res.arrayBuffer())
+        : await res.text();
+
+      const split = rel.split("/");
       let working = '/working/';
       for (let f = 0; f < split.length - 1; f++) {
           working += split[f];
           if (!mujoco.FS.analyzePath(working).exists) { mujoco.FS.mkdir(working); }
           working += "/";
       }
-
-      if (allFiles[i].endsWith(".png") || allFiles[i].endsWith(".stl") || allFiles[i].endsWith(".skn")) {
-          mujoco.FS.writeFile("/working/" + allFiles[i], new Uint8Array(await responses[i].arrayBuffer()));
-      } else {
-          mujoco.FS.writeFile("/working/" + allFiles[i], await responses[i].text());
-      }
-  }
+      mujoco.FS.writeFile("/working/" + rel, data);
+    }
+  };
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   if (failed.length) {
       console.error(`[robospace] ${failed.length} bundled scene file(s) failed to download:\n  `
         + failed.join('\n  '));
