@@ -234,6 +234,17 @@ export class RoboSpaceDemo {
     this.mujoco = mujoco;
     this._loadQueue = Promise.resolve();
 
+    // Resolves once a scene has been compiled, successfully or not.
+    //
+    // The Python prelude cannot run before this. It instantiates `robot =
+    // Robot()` at module level, whose DriveBaseComponent reads
+    // actuator_names(), which raises "No model is loaded yet." with no model.
+    // Pyodide loading and scene loading are two independent chains and nothing
+    // ordered them, so this was a live race decided by how long the Pyodide CDN
+    // took: with a cold cache the scene always won, and with pyodide.js served
+    // from disk cache (8 ms) Python won and the prelude died.
+    this._sceneReady = new Promise((resolve) => { this._resolveSceneReady = resolve; });
+
     // Deliberately NOT loaded here. init() calls loadSceneFromURL for this very
     // same scene moments later, so compiling it in the constructor built an entire
     // mjModel + mjData that was then thrown away — and thrown away is literal: this
@@ -264,8 +275,8 @@ export class RoboSpaceDemo {
     // recording back at wall-clock speed, which is what lets the whole motion API be
     // await-free without the user losing sight of the motion.
     this.playback = null;
-    this._sceneReady = false;
-    this._pythonReady = false;
+    this._sceneReadyFlag = false;
+    this._pythonReadyFlag = false;
     this.setupStatusIndicator();
     this.setupToolbar();
     this.setupProgramControls();
@@ -363,9 +374,14 @@ export class RoboSpaceDemo {
   }
 
   _markReady(which) {
-    if (which === 'scene') this._sceneReady = true;
-    if (which === 'python') this._pythonReady = true;
-    if (this._sceneReady && this._pythonReady) {
+    if (which === 'scene') {
+      this._sceneReadyFlag = true;
+      // Both the success and failure paths mark the scene ready, so awaiting
+      // this cannot hang on a scene that fails to compile.
+      this._resolveSceneReady?.();
+    }
+    if (which === 'python') this._pythonReadyFlag = true;
+    if (this._sceneReadyFlag && this._pythonReadyFlag) {
       bootDone = true;
       if (this.setSimStatus) this.setSimStatus('ready');
     }
@@ -635,6 +651,10 @@ export class RoboSpaceDemo {
       // Load numpy package
       await window.pyodide.loadPackage(["numpy"]);
       console.log("NumPy package loaded");
+
+      // Wait for a compiled model before running the prelude -- see the
+      // comment on _sceneReady in the constructor.
+      await this._sceneReady;
 
       // Initialize Python environment
       await this.initializePythonEnvironment();
