@@ -1216,6 +1216,132 @@ _VLA_CAMERA_SLOTS = {
 }
 
 
+# ─── Meta-World ─────────────────────────────────────────────────────────────
+
+_METAWORLD_TASKS = {
+    19: 'Open a drawer',
+    18: 'Push and close a drawer',
+}
+
+_METAWORLD_PROFILE = {
+    # jadechoghari/smolvla_metaworld. One camera, and it is corner4, not the
+    # corner2 that Meta-World documents as its demo view: rendering all seven
+    # cameras against a real training frame gives corner4 under a vertical +
+    # horizontal flip at 1.91/255 against 34.09 for the runner-up. The flip is
+    # applied by the renderer here because captureImage returns the view already
+    # upright, which is what the board's [::-1, ::-1] produces.
+    'camera': 'corner4',
+    'capture': (480, 480),
+    'image_key': 'image',           # policy feature is observation.image
+    'replan': 5,                    # the checkpoint declares n_action_steps=1
+    'max_steps': 200,               # scripted demos finish in 75-93
+}
+
+
+async def load_metaworld(pack='metaworld_drawer'):
+    """Load a Meta-World scene: a Sawyer arm driven by a welded mocap body.
+
+        await load_metaworld()
+        print(metaworld_state())
+
+    3.4 MB, cached after the first run. Unlike load_robot(), the pack's own XML
+    is the scene rather than a robot included into a generated floor -- it
+    already has a worldbody of its own.
+    """
+    res = await window.robospaceLoadMetaworld(pack)
+    if res is None:
+        return None
+    tasks = [t.to_py() if hasattr(t, 'to_py') else t for t in res.tasks]
+    print('Loaded %s. Tasks:' % pack)
+    for t in tasks:
+        print('   %s  "%s"' % (t['id'], t['text']))
+    return res
+
+
+async def metaworld_reset():
+    """Return the arm to Meta-World's home pose and re-apply the mocap weld.
+
+    Call between episodes. The weld patch is not optional: without it the hand
+    sags about 19 cm below the mocap target and the policy looks broken.
+    """
+    res = await window.robospaceMetaworldReset()
+    return [float(v) for v in res.state]
+
+
+async def metaworld_state():
+    """[hand_x, hand_y, hand_z, gripper_gap] -- the 4-D policy input."""
+    return [float(v) for v in await window.robospaceMetaworldState()]
+
+
+async def metaworld_observation(prompt):
+    """One observation in the shape the board's /v1/act expects."""
+    w, h = _METAWORLD_PROFILE['capture']
+    url = camera_image(_METAWORLD_PROFILE['camera'], w, h, 'jpeg')
+    if not url:
+        raise RuntimeError('camera %r produced no image. Cameras: %s'
+                           % (_METAWORLD_PROFILE['camera'], ', '.join(camera_names())))
+    return {
+        'images': {_METAWORLD_PROFILE['image_key']:
+                   url.split(',', 1)[1] if ',' in url else url},
+        'state': await metaworld_state(),
+        'prompt': prompt,
+    }
+
+
+async def vla_metaworld(task=19, steps=None, replan=None, prompt=None, verbose=True):
+    """Drive the Meta-World Sawyer with the VLA policy on the board.
+
+        await load_metaworld()
+        await vla_metaworld(19)      # "Open a drawer"
+        await vla_metaworld(18)      # "Push and close a drawer" -- same scene
+
+    The two tasks share one MJCF, so the scene is identical and only the
+    sentence differs. Measured on the board: 6/6 with the matching sentence and
+    0/6 with the other, Fisher p = 0.00216. Pass 'prompt' to try your own, which
+    is the interesting thing to do and is flagged below as off-distribution.
+
+    Each inference returns a 50-action chunk and 'replan' of them are executed
+    before asking again. The checkpoint's config says 1; 5 is the measured
+    compromise and what the board's numbers were taken at.
+    """
+    if task not in _METAWORLD_TASKS:
+        raise ValueError('unknown task %r. Have: %s'
+                         % (task, ', '.join(str(k) for k in sorted(_METAWORLD_TASKS))))
+    text = _METAWORLD_TASKS[task] if prompt is None else prompt
+    off_distribution = prompt is not None and prompt not in _METAWORLD_TASKS.values()
+    steps = _METAWORLD_PROFILE['max_steps'] if steps is None else int(steps)
+    replan = _METAWORLD_PROFILE['replan'] if replan is None else int(replan)
+
+    await metaworld_reset()
+    if verbose:
+        print('task %d: "%s"%s' % (task, text,
+              '   <- your own sentence, not a training string' if off_distribution else ''))
+
+    queue, chunks, done = [], 0, 0
+    t0 = window.performance.now()
+    for i in range(steps):
+        if not queue:
+            obs = await metaworld_observation(text)
+            res = await window.robospaceVlaAct(json.dumps(obs))
+            actions = res.actions.to_py() if hasattr(res.actions, 'to_py') else res.actions
+            queue = [[float(v) for v in a] for a in actions][:replan]
+            chunks += 1
+            if verbose and chunks == 1:
+                print('  first chunk in %.2fs' % ((window.performance.now() - t0) / 1000.0))
+        window.robospaceMetaworldAct(queue.pop(0))
+        done = i + 1
+    wall = (window.performance.now() - t0) / 1000.0
+    st = await metaworld_state()
+    if verbose:
+        print('  %d steps, %d inferences, %.1fs  (%.0f ms/chunk)'
+              % (done, chunks, wall, 1000.0 * wall / max(chunks, 1)))
+        print('  hand now [%s]' % ', '.join('%.4f' % v for v in st))
+        print('  NOTE success is scored by the environment on the board, not here;')
+        print('       watch the drawer to see what happened.')
+    return {'task': task, 'prompt': text, 'steps': done, 'chunks': chunks,
+            'seconds': wall, 'state': st, 'off_distribution': off_distribution}
+
+
 def vla_observation(cameras=('front_camera', 'gripper_camera'), size=256):
     """Build the observation dict the VLA server expects.
 
@@ -2400,6 +2526,9 @@ def help_api():
         ('vla policy (needs await, RoboSpace app only)',
             ['load_task_scene', 'vla_ready', 'vla_profile', 'vla_control_loop_so101',
              'vla_act_so101', 'vla_observation_so101', 'vla_benchmark']),
+        ('meta-world vla (needs await, RoboSpace app only)',
+            ['load_metaworld', 'vla_metaworld', 'metaworld_reset', 'metaworld_state',
+             'metaworld_observation']),
         ('control', ['set_control', 'get_control', 'get_actuator_ranges']),
         ('state', ['get_qpos', 'get_qvel', 'set_qpos', 'set_qvel', 'get_joint',
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),

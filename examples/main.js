@@ -1311,6 +1311,139 @@ window.robospaceLoadRobot = async (packId = 'franka_panda') => {
   }
 };
 
+// ─── Meta-World ─────────────────────────────────────────────────────────────
+//
+// Meta-World scenes are loaded differently from menagerie robots and controlled
+// differently once loaded, and both differences are load-bearing.
+//
+// Loading: a menagerie pack ships a robot that gets <include>d into a generated
+// scene.xml standing it on a floor. sawyer_drawer.xml is already a complete
+// model with its own <worldbody>, so including it would nest <worldbody> inside
+// <worldbody> and fail to compile. entryXmlPath points the compile at the pack's
+// own entry instead, which is what that parameter is for.
+//
+// Controlling: the Sawyer has NO arm actuators -- nu=2, both gripper. The arm is
+// moved by a mocap body welded to the hand, and Meta-World patches that weld at
+// runtime in Python (reset_mocap_welds), which nothing in the MJCF hints at.
+// Skip the patch and there is no error: the compiler's auto-computed relpose and
+// default torquescale 1 leave the hand sagging ~19 cm below the mocap target,
+// tracking it loosely, which reads as a broken policy.
+//
+// With the patch, this build matches the inference board to 4.17e-7 over 300
+// physics steps. See test/metaworld-parity.test.mjs and vla_model/docs/metaworld.md.
+
+const MW_WELD_EQ_DATA = [0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 5.0];
+const MW_HAND_INIT = [0, 0.6, 0.2];
+const MW_MOCAP_QUAT = [1, 0, 1, 0];
+const MW_SETTLE_ITERS = 50;
+const MW_FRAME_SKIP = 5;
+const MW_ACTION_SCALE = 1 / 100;
+
+// Per-task mocap bounds. SawyerXYZEnv's class defaults are [-0.2,0.5,0.06]..
+// [0.2,0.7,0.6], but drawer-open overrides them; read the task's own values.
+const MW_BOUNDS = { low: [-0.5, 0.4, 0.05], high: [0.5, 1.0, 0.5] };
+
+let mwBodies = null;   // { hand, rightclaw, leftclaw } index cache, per model
+
+async function mwBodyIndices() {
+  if (mwBodies && mwBodies.model === demo.model) return mwBodies;
+  const { readNames } = await import(versioned('./mujocoUtils.js'));
+  const names = readNames(demo.model, demo.model.name_bodyadr, demo.model.nbody, 'body');
+  const need = ['hand', 'rightclaw', 'leftclaw'];
+  const missing = need.filter((n) => names.indexOf(n) < 0);
+  if (missing.length) throw new Error(`not a Meta-World scene: no body ${missing.join(', ')}`);
+  mwBodies = { model: demo.model, hand: names.indexOf('hand'),
+               rightclaw: names.indexOf('rightclaw'), leftclaw: names.indexOf('leftclaw') };
+  return mwBodies;
+}
+
+function mwPatchWeld() {
+  const m = demo.model;
+  if (!m.neq) throw new Error('scene has no equality constraint; the mocap weld is missing');
+  const stride = m.eq_data.length / m.neq;
+  let patched = 0;
+  for (let i = 0; i < m.neq; i++) {
+    if (m.eq_type[i] !== 1) continue;                        // mjEQ_WELD
+    for (let k = 0; k < stride; k++) m.eq_data[i * stride + k] = MW_WELD_EQ_DATA[k] ?? 0;
+    patched++;
+  }
+  return patched;
+}
+
+// Meta-World's _reset_hand, verbatim: zero the state, then 50 iterations that
+// re-pin the mocap body and step with the gripper open.
+window.robospaceMetaworldReset = async () => {
+  const sim = demo.simulation, m = demo.model;
+  const welds = mwPatchWeld();
+  for (let i = 0; i < m.nq; i++) sim.qpos[i] = 0;
+  for (let i = 0; i < m.nv; i++) sim.qvel[i] = 0;
+  sim.forward();
+  for (let i = 0; i < MW_SETTLE_ITERS; i++) {
+    for (let k = 0; k < 3; k++) sim.mocap_pos[k] = MW_HAND_INIT[k];
+    for (let k = 0; k < 4; k++) sim.mocap_quat[k] = MW_MOCAP_QUAT[k];
+    sim.ctrl[0] = -1; sim.ctrl[1] = 1;
+    for (let k = 0; k < MW_FRAME_SKIP; k++) sim.step();
+  }
+  demo.simClock?.advance(MW_SETTLE_ITERS * MW_FRAME_SKIP, m.getOptions?.().timestep ?? 0);
+  return { welds, state: await window.robospaceMetaworldState() };
+};
+
+// [hand.x, hand.y, hand.z, gripper_distance_apart] -- the 4-D vector the policy
+// consumes. These are BODIES: there is no site named "hand", and the gap is read
+// from the claw bodies, not the fingertip sites.
+window.robospaceMetaworldState = async () => {
+  const { hand, rightclaw, leftclaw } = await mwBodyIndices();
+  const x = demo.simulation.xpos;
+  const at = (i) => [x[i * 3], x[i * 3 + 1], x[i * 3 + 2]];
+  const r = at(rightclaw), l = at(leftclaw);
+  const gap = Math.hypot(r[0] - l[0], r[1] - l[1], r[2] - l[2]) / 0.1;
+  return [...at(hand), Math.min(1, Math.max(0, gap))];
+};
+
+// One policy action: metaworld set_xyz_action + do_simulation, verbatim.
+// The clip is not optional -- recorded actions reach 4.62 on a channel bounded
+// at 1, and without it z overshoots by 462x.
+window.robospaceMetaworldAct = (action) => {
+  const a = Array.from(action, Number);
+  if (a.length !== 4 || a.some((v) => !Number.isFinite(v))) {
+    throw new Error(`action must be 4 finite numbers, got ${JSON.stringify(action)}`);
+  }
+  const sim = demo.simulation;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  for (let i = 0; i < 3; i++) {
+    sim.mocap_pos[i] = clamp(sim.mocap_pos[i] + clamp(a[i], -1, 1) * MW_ACTION_SCALE,
+                             MW_BOUNDS.low[i], MW_BOUNDS.high[i]);
+  }
+  sim.ctrl[0] = a[3];
+  sim.ctrl[1] = -a[3];
+  for (let k = 0; k < MW_FRAME_SKIP; k++) sim.step();
+  demo.simClock?.advance(MW_FRAME_SKIP, demo.model.getOptions?.().timestep ?? 0);
+};
+
+window.robospaceLoadMetaworld = async (packId = 'metaworld_drawer') => {
+  const { writeGeneratedScene } = await import(versioned('./utils/sceneWriter.js'));
+  const { ROBOT_MANIFESTS } = await import(versioned('./utils/robotPacks.js'));
+  const manifest = Object.prototype.hasOwnProperty.call(ROBOT_MANIFESTS, packId)
+    ? ROBOT_MANIFESTS[packId] : null;
+  if (!manifest || !manifest.entry) {
+    say(`Unknown Meta-World pack "${packId}".`, 'error');
+    return null;
+  }
+  say(`Loading ${packId}: ${manifest.files.length} files, ${(manifest.totalBytes / 1048576).toFixed(1)} MB`);
+  const started = performance.now();
+  const result = await writeGeneratedScene(demo, {
+    sceneName: packId,
+    robotPack: packId,
+    files: [],
+    entryXmlPath: manifest.entry,       // the pack entry IS the scene
+  });
+  for (const p of result.patched) say(`  patched ${p.path}: ${p.notes.join('; ')}`, 'warn');
+  const reset = await window.robospaceMetaworldReset();
+  const st = reset.state.map((v) => v.toFixed(4)).join(', ');
+  say(`Loaded in ${((performance.now() - started) / 1000).toFixed(1)}s — weld patched (${reset.welds}), hand at [${st}]`);
+  return { ...result, tasks: manifest.tasks || [], state: reset.state };
+};
+
 // Author a whole scene, rather than standing a robot on the default floor:
 //   await robospaceLoadScene('<mujoco>…</mujoco>', 'franka_panda', 'pick')
 //

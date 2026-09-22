@@ -22,12 +22,15 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 let failures = 0;
 const ok = (m) => console.log(`  ok    ${m}`);
 const bad = (m) => { failures++; console.log(`  FAIL  ${m}`); };
 
-const root = path.join(import.meta.dirname, '..');
+// import.meta.dirname is Node 20+; this repo runs on 18, where it is undefined
+// and path.join then throws ERR_INVALID_ARG_TYPE before a single file is checked.
+const root = fileURLToPath(new URL('..', import.meta.url));
 
 // Everything we author. `dist/` is generated and `examples/scenes/` holds assets.
 const roots = ['examples', 'test', 'tools'];
