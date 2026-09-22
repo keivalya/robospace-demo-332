@@ -275,12 +275,15 @@ robot.wait(0.5)
   so101_pick_block: {
     id: 'so101_pick_block',
     name: 'SO-101 Pick Block',
-    // The dataset panel runs `pythonScript` below -- a PRIVILEGED TEACHER that
-    // reads the cube's exact pose and uses no cameras at all. It never contacts
-    // the inference server. The VLA runs the same scene through a different
-    // entry point (vla_control_loop_so101 / vla_benchmark), which is the whole
-    // point of sharing scene, randomisation and evaluateSuccess between them:
-    // the teacher number is what the policy number gets compared against.
+    // `pythonScript` below is a PRIVILEGED TEACHER: it reads the cube's exact
+    // pose and uses no cameras, and it never contacts the inference server. That
+    // is true of every entry in this table -- the dataset collector always runs
+    // a scripted policy, and says so at runtime ("Executing Teacher Macro").
+    //
+    // The VLA drives the same scene through a different entry point
+    // (vla_control_loop_so101 / vla_benchmark). Sharing scene, randomisation and
+    // evaluateSuccess is the point: the teacher establishes that the scene is
+    // solvable, and its number is what the policy's number is compared against.
     robot: 'robotstudio_so101',
     description: 'pick up the cube and place it in the bowl',
     sceneXml: `<mujoco model="so101_pick_block">
