@@ -273,8 +273,8 @@ robot.wait(0.5)
   // The bowl is present but not scored. Both candidate checkpoints were trained
   // on pick-AND-place ("pick up the cube and place it in the bowl"), so a bare
   // block would be out of distribution even though we score only the lift.
-  so101_pick_block: {
-    id: 'so101_pick_block',
+  so101_pick_cube: {
+    id: 'so101_pick_cube',
     name: 'SO-101 Pick Cube',
     // `pythonScript` below is a PRIVILEGED TEACHER: it reads the cube's exact
     // pose and uses no cameras, and it never contacts the inference server. That
@@ -287,7 +287,7 @@ robot.wait(0.5)
     // solvable, and its number is what the policy's number is compared against.
     robot: 'robotstudio_so101',
     description: 'pick up the cube and place it in the bowl',
-    sceneXml: `<mujoco model="so101_pick_block">
+    sceneXml: `<mujoco model="so101_pick_cube">
   <include file="so101.xml"/>
   <compiler angle="radian" autolimits="true"/>
   <option integrator="implicitfast" timestep="0.005" cone="elliptic" impratio="10"/>

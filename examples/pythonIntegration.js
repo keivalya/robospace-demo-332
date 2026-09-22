@@ -1256,10 +1256,10 @@ def _vla_gripper_qpos():
     return [0.0, 0.0]
 
 
-async def load_task_scene(task='so101_pick_block'):
+async def load_task_scene(task='so101_pick_cube'):
     """Load a teacher task's scene, block and cameras. Must be awaited.
 
-        await load_task_scene('so101_pick_block')
+        await load_task_scene('so101_pick_cube')
 
     load_robot() is not enough for the VLA path: it stands the arm on a bare
     floor, so there is no block to pick and no declared cameras -- only the
