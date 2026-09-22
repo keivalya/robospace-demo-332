@@ -3,6 +3,7 @@
   "version": "0.0.2",
   "description": "Run MuJoCo simulations in browser",
   "main": "dist/mujoco_wasm.js",
+  "type": "module",
   "directories": {
     "lib": "lib"
   },
@@ -18,6 +19,7 @@
     "test:mjmath": "node test/mjmath.test.mjs",
     "test:ik": "node --import ./test/register.mjs test/ik.test.mjs",
     "test:packs": "node --import ./test/register.mjs test/robot-packs.test.mjs",
+    "test:metaworld": "node --import ./test/register.mjs test/metaworld-parity.test.mjs",
     "test:scene": "node --import ./test/register.mjs tools/check-scene.mjs test/fixtures/kitchen_stretch.xml",
     "test:sensors": "node --import ./test/register.mjs test/sensors-cameras.test.mjs",
     "test:challenges": "node --import ./test/register.mjs test/challenge-evaluator.test.mjs",
