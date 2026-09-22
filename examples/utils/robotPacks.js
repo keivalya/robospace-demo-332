@@ -24,9 +24,15 @@
 // Packs are large (Panda 32.7 MB, Stretch 3 72.8 MB), so decoded bytes are cached
 // in IndexedDB keyed by the pinned commit — the second load of a robot is local.
 
-import { MENAGERIE_COMMIT, ROBOT_MANIFESTS } from './robotManifests.js';
+import { MENAGERIE_COMMIT, ROBOT_MANIFESTS as MENAGERIE_MANIFESTS } from './robotManifests.js';
+import { METAWORLD_MANIFESTS } from './metaworldManifest.js';
 
 const REPO = 'google-deepmind/mujoco_menagerie';
+
+// Menagerie packs plus Meta-World scenes. A manifest may carry its own `repo`
+// and `commit`; without them it is assumed to be menagerie at the pinned commit,
+// so every existing entry is untouched.
+const ROBOT_MANIFESTS = { ...MENAGERIE_MANIFESTS, ...METAWORLD_MANIFESTS };
 const CONCURRENCY = 8;
 const DB_NAME = 'robospace_robot_packs';
 const STORE = 'files';
@@ -37,14 +43,23 @@ export function listRobotPacks() {
   return Object.keys(ROBOT_MANIFESTS);
 }
 
-function cdnUrl(upstreamDir, filePath) {
-  return `https://cdn.jsdelivr.net/gh/${REPO}@${MENAGERIE_COMMIT}/${upstreamDir}/${filePath}`;
+function sourceOf(manifest) {
+  return {
+    repo: (manifest && manifest.repo) || REPO,
+    commit: (manifest && manifest.commit) || MENAGERIE_COMMIT,
+  };
+}
+
+function cdnUrl(upstreamDir, filePath, src) {
+  const { repo, commit } = sourceOf(src);
+  return `https://cdn.jsdelivr.net/gh/${repo}@${commit}/${upstreamDir}/${filePath}`;
 }
 
 // Same commit, different host: raw.githubusercontent has no file-size cap and
 // also sends access-control-allow-origin: *, so it works cross-origin.
-function rawUrl(upstreamDir, filePath) {
-  return `https://raw.githubusercontent.com/${REPO}/${MENAGERIE_COMMIT}/${upstreamDir}/${filePath}`;
+function rawUrl(upstreamDir, filePath, src) {
+  const { repo, commit } = sourceOf(src);
+  return `https://raw.githubusercontent.com/${repo}/${commit}/${upstreamDir}/${filePath}`;
 }
 
 // ─── IndexedDB cache ────────────────────────────────────────────────────────
@@ -233,7 +248,7 @@ function patchRobotXml(packId, xml) {
   return { xml: out, notes, homePose: kf.homePose, dropped: [] };
 }
 
-const PACKS_NEEDING_TEXTURE_STRIP = new Set(['stretch_3']);
+const PACKS_NEEDING_TEXTURE_STRIP = new Set(['stretch_3', 'metaworld_drawer']);
 
 const isXml = (path) => /\.xml$/i.test(path);
 
@@ -249,10 +264,10 @@ function ensureDir(FS, dirPath) {
 
 // ─── fetching ───────────────────────────────────────────────────────────────
 
-async function fetchBytes(fetchImpl, upstreamDir, file) {
+async function fetchBytes(fetchImpl, upstreamDir, file, src) {
   const attempts = file.viaRaw
-    ? [rawUrl(upstreamDir, file.path)]
-    : [cdnUrl(upstreamDir, file.path), rawUrl(upstreamDir, file.path)];
+    ? [rawUrl(upstreamDir, file.path, src)]
+    : [cdnUrl(upstreamDir, file.path, src), rawUrl(upstreamDir, file.path, src)];
 
   let lastError = null;
   for (const url of attempts) {
@@ -307,11 +322,15 @@ export async function ensureRobotPack(mujoco, packId, sceneDir, opts = {}) {
   let homePose = null;
 
   const writeOne = async (file) => {
-    const key = `${MENAGERIE_COMMIT}/${upstreamDir}/${file.path}`;
+      // Keyed on repo as well as commit: two sources can both pin "master",
+      // and a cache hit across repos would serve one project's bytes for
+      // another's path.
+      const src = sourceOf(manifest);
+      const key = `${src.repo}@${src.commit}/${upstreamDir}/${file.path}`;
     let data = null;
     try { data = await cache.get(key); } catch (_) { /* cache miss is not fatal */ }
     if (!data) {
-      data = await fetchBytes(fetchImpl, upstreamDir, file);
+      data = await fetchBytes(fetchImpl, upstreamDir, file, manifest);
       try { await cache.set(key, data); } catch (_) { /* nor is a failed write */ }
     }
     const full = `${root}/${file.path}`;
