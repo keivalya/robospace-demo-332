@@ -240,7 +240,8 @@ robot.wait(0.5)
     },
   },
 
-  // SO-101 (SO-ARM101). The one robot the VLA path targets.
+  // SO-101 (SO-ARM101). The one robot the VLA path targets. "Cube" rather than
+  // "block" to match the Panda tasks, and because the body really is named `cube`.
   //
   // Scene fidelity is the whole game here, because the policy is used zero-shot:
   // we cannot move it toward our simulator, so the simulator has to move toward
@@ -274,7 +275,7 @@ robot.wait(0.5)
   // block would be out of distribution even though we score only the lift.
   so101_pick_block: {
     id: 'so101_pick_block',
-    name: 'SO-101 Pick Block',
+    name: 'SO-101 Pick Cube',
     // `pythonScript` below is a PRIVILEGED TEACHER: it reads the cube's exact
     // pose and uses no cameras, and it never contacts the inference server. That
     // is true of every entry in this table -- the dataset collector always runs
