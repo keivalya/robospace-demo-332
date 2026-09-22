@@ -55,7 +55,28 @@ const COMPRESSIBLE = new Set([
   '.obj', '.mtl', '.stl', '.wasm',
 ]);
 
+// Per-request log, on by default. This is a dev server whose whole reason to
+// exist is diagnosing what the browser actually fetched; guessing from the other
+// side of a Network tab is how the 30 s boot timeout stayed unexplained. Prints
+// status, bytes actually written, whether it was gzipped, and elapsed ms.
+const QUIET = process.env.DEV_SERVER_QUIET === '1';
+
 const server = http.createServer((req, res) => {
+  const t0 = process.hrtime.bigint();
+  if (!QUIET) {
+    res.on('finish', () => {
+      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+      // Track the decision on `res` rather than asking getHeader(): headers
+      // passed to writeHead() are not visible to it, which made the first
+      // version of this log claim nothing was ever compressed.
+      const enc = res._sentGzip ? 'gz' : '--';
+      const ae = /\bgzip\b/.test(req.headers['accept-encoding'] || '') ? '' : ' [no-AE]';
+      const n = res._sentBytes ?? 0;
+      console.log(`${res.statusCode} ${enc} ${String(n).padStart(9)}B `
+        + `${ms.toFixed(0).padStart(6)}ms  ${req.url}${ae}`);
+    });
+  }
+
   let pathname;
   try {
     ({ pathname } = new URL(req.url, `http://${req.headers.host || 'localhost'}`));
@@ -111,15 +132,22 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    const count = (stream) => {
+      res._sentBytes = 0;
+      stream.on('data', (c) => { res._sentBytes += c.length; });
+      return stream;
+    };
+
     if (compressible && wantsGzip) {
       headers['content-encoding'] = 'gzip';       // length omitted -> chunked
+      res._sentGzip = true;
       res.writeHead(200, headers);
-      fs.createReadStream(file).pipe(zlib.createGzip({ level: 6 })).pipe(res);
+      count(fs.createReadStream(file).pipe(zlib.createGzip({ level: 6 }))).pipe(res);
       return;
     }
     headers['content-length'] = st.size;
     res.writeHead(200, headers);
-    fs.createReadStream(file).pipe(res);
+    count(fs.createReadStream(file)).pipe(res);
   });
 });
 
