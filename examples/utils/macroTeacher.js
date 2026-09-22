@@ -275,6 +275,12 @@ robot.wait(0.5)
   so101_pick_block: {
     id: 'so101_pick_block',
     name: 'SO-101 Pick Block',
+    // The dataset panel runs `pythonScript` below -- a PRIVILEGED TEACHER that
+    // reads the cube's exact pose and uses no cameras at all. It never contacts
+    // the inference server. The VLA runs the same scene through a different
+    // entry point (vla_control_loop_so101 / vla_benchmark), which is the whole
+    // point of sharing scene, randomisation and evaluateSuccess between them:
+    // the teacher number is what the policy number gets compared against.
     robot: 'robotstudio_so101',
     description: 'pick up the cube and place it in the bowl',
     sceneXml: `<mujoco model="so101_pick_block">

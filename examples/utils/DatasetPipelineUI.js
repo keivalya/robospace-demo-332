@@ -95,7 +95,7 @@ export class DatasetPipelineUI {
               <option value="panda_pick_cube">Franka Panda — Pick Cube</option>
               <option value="panda_pick_and_place">Franka Panda — Pick & Place</option>
               <option value="panda_stack_blocks">Franka Panda — Stack Blocks</option>
-              <option value="so101_pick_block">SO-101 — Pick Block (VLA)</option>
+              <option value="so101_pick_block">SO-101 — Pick Block (teacher)</option>
               <option value="ur5e_reach_beacon">UR5e — Reach Beacon</option>
               <option value="custom_script">Current Editor Script</option>
             </select>
