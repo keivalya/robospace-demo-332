@@ -14,6 +14,7 @@
  *   node tools/dev-server.mjs [port]     (default 8000, or $PORT)
  */
 import http from 'node:http';
+import zlib from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,6 +46,15 @@ const TYPES = {
   '.zip': 'application/zip',
 };
 
+// Text-ish formats worth compressing. Deliberately excludes already-compressed
+// containers (png/jpg/gif/zip) where gzip costs CPU and saves nothing, and
+// includes .obj/.mtl/.stl because MuJoCo meshes are ASCII and dominate the boot
+// payload -- .obj alone is 33 MB of the bundled scene.
+const COMPRESSIBLE = new Set([
+  '.html', '.js', '.mjs', '.css', '.json', '.xml', '.txt', '.svg',
+  '.obj', '.mtl', '.stl', '.wasm',
+]);
+
 const server = http.createServer((req, res) => {
   let pathname;
   try {
@@ -70,16 +80,44 @@ const server = http.createServer((req, res) => {
       res.writeHead(404, { 'content-type': 'text/plain' }).end('404 ' + rel);
       return;
     }
+    const ext = path.extname(file).toLowerCase();
     const headers = {
-      'content-type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream',
-      'content-length': st.size,
+      'content-type': TYPES[ext] || 'application/octet-stream',
       // The whole point of this server.
       'cache-control': 'no-store, must-revalidate',
     };
+
+    // Compress, because the boot path is 33 MB of plain-text geometry.
+    //
+    // downloadExampleScenesFolder() fetches the 23 bundled UR5e files before the
+    // app will start, and gives up after 30 s. Those are ASCII .obj meshes:
+    // 32.9 MB raw, 6.4 MB gzipped, 5.1x. Over a tailnet link measured at about
+    // 1.1 MB/s that is 30.0 s against 5.8 s -- i.e. uncompressed lands exactly
+    // on the timeout, which is how this presented: boot failing at "downloading
+    // the bundled example scenes" on a server that serves the same files to
+    // loopback in 0.1 s.
+    const compressible = COMPRESSIBLE.has(ext);
+    const wantsGzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+    if (compressible) headers.vary = 'accept-encoding';
+
     if (req.method === 'HEAD') {
+      // Mirror what a GET would answer, minus the body. Notably: no
+      // content-length when we would have compressed, because the raw size
+      // would be a lie and the compressed size is not known without doing the
+      // compression.
+      if (compressible && wantsGzip) headers['content-encoding'] = 'gzip';
+      else headers['content-length'] = st.size;
       res.writeHead(200, headers).end();
       return;
     }
+
+    if (compressible && wantsGzip) {
+      headers['content-encoding'] = 'gzip';       // length omitted -> chunked
+      res.writeHead(200, headers);
+      fs.createReadStream(file).pipe(zlib.createGzip({ level: 6 })).pipe(res);
+      return;
+    }
+    headers['content-length'] = st.size;
     res.writeHead(200, headers);
     fs.createReadStream(file).pipe(res);
   });
