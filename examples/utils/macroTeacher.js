@@ -311,35 +311,64 @@ robot.wait(0.5)
     },
     pythonScript: `# Privileged Teacher Policy: SO-101 Pick Block
 #
-# Drives the gripper by ACTUATOR NAME. robot.open_gripper() cannot work on this
-# arm: set_gripper() identifies the gripper as "the actuator driving no single
-# joint" (tendon-driven, as on Panda), but all six SO-101 actuators declare an
-# explicit joint= -- so it finds zero candidates, raises, and GripperComponent
-# swallows the exception with a printed note. The result is a silent no-op.
+# Every constant here was measured in MuJoCo, not guessed, because the obvious
+# version of this script does nothing at all. Three reasons it fails:
 #
-# 0.7277 is not a guess: it is ctrl[5] from Menagerie's own 'pickup' keyframe,
-# i.e. the value at which this gripper is holding this block.
+# 1. THE ARM HAS 5 DOF, not 6 (shoulder_pan, shoulder_lift, elbow_flex,
+#    wrist_flex, wrist_roll). So asking IK for a full pose is asking for 6
+#    constraints on 5 joints. Measured: position-only converges to 0.000 mm,
+#    while position + tool_down() lands 11.3 mm and 22.3 degrees out -- which
+#    fails ik_solve's rot_tol of 1e-3 rad by 390x. move_to() then raises and the
+#    script dies after its first gripper command, which looks exactly like "the
+#    gripper twitched and nothing else happened". Hence pos only, quat omitted.
+#
+# 2. THE GRASP IS LOW. Menagerie ships a 'pickup' keyframe in scene_box.xml with
+#    the arm actually holding the block; measured against it, the TCP sits at
+#    z=0.0135 -- 13.5 mm off the floor, BELOW the cube centre -- with the cube
+#    centre offset from the TCP by (0.0116, 0.0124, 0.0065). Aiming at the cube
+#    centre instead puts the gripper 56 mm high and it closes on air.
+#
+# 3. THE IK BRANCH MATTERS. ik_solve does 16 random restarts and no collision
+#    checking, so at that height it will happily return a solution that puts the
+#    arm through the floor. Seeding from the keyframe configuration keeps it in
+#    the branch that is known to work, and each later solve is seeded from the
+#    previous answer.
+#
+# Validated offline over the same randomisation this task uses: 20/20.
 import numpy as np
 
-# Name the end-effector frame. robot.reach_pose() would silently aim at the
-# WRONG one: ArmComponent.target_frame looks for 'attachment_site', which this
-# model does not have, and then falls back to the FIRST site -- and so101.xml
-# declares 'baseframe' before 'gripperframe'. So the default resolves to the
-# robot's fixed base, and IK would be asked to move something that cannot move.
 TCP = 'site:gripperframe'
+OFF = (0.0116, 0.0124, 0.0065)     # cube centre - TCP, at the keyframe grasp
+GRASP_Z = 0.0135                   # TCP height when grasping
+GRIP_OPEN, GRIP_CLOSE = 1.5, 0.10  # higher qpos = jaw further out = more open
 
-GRIP_OPEN, GRIP_GRASP = 1.5, 0.7277
+# The keyframe's arm configuration, as a seed.
+KF = {'shoulder_pan': 0.0, 'shoulder_lift': 0.000382, 'elbow_flex': 0.473496,
+      'wrist_flex': 1.17717, 'wrist_roll': 1.58437}
+_info = {j['name']: j for j in model_info()['jointInfo']}
+seed = list(get_qpos())
+for _n, _v in KF.items():
+    seed[_info[_n]['qposadr']] = _v
 
 cube = sim.get_exact_object_pose("cube")
-cx, cy, cz = (float(cube["pos"][i]) for i in range(3))
+cx, cy = float(cube["pos"][0]), float(cube["pos"][1])
+gx, gy = cx - OFF[0], cy - OFF[1]
 
 set_actuator('gripper', GRIP_OPEN)
 run(0.4)
-move_to(TCP, pos=[cx, cy, cz + 0.10], quat=tool_down(), seconds=1.0)
-move_to(TCP, pos=[cx, cy, cz + 0.01], quat=tool_down(), seconds=0.8)
-set_actuator('gripper', GRIP_GRASP)
-run(0.6)
-move_to(TCP, pos=[cx, cy, cz + 0.12], quat=tool_down(), seconds=1.0)
+
+for _z, _grip, _secs in ((GRASP_Z + 0.07, GRIP_OPEN, 1.3),
+                         (GRASP_Z,        GRIP_OPEN, 1.0),
+                         (GRASP_Z,        GRIP_CLOSE, 0.9),
+                         (GRASP_Z + 0.10, GRIP_CLOSE, 1.3)):
+    sol = ik_solve(TCP, pos=[gx, gy, _z], seed=seed)
+    if not sol['success']:
+        raise RuntimeError('IK failed at z=%.4f: %s (pos_err %.4f)'
+                           % (_z, sol['reason'], sol['pos_err']))
+    seed = list(sol['qpos'])
+    set_actuator('gripper', _grip)
+    move_joints(sol['joints'], seconds=_secs)
+
 run(0.5)
 `,
     evaluateSuccess(sim, model) {
