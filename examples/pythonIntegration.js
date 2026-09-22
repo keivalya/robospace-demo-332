@@ -1,6 +1,7 @@
 // pythonIntegration.js
 import * as THREE from 'three';
 import { runVlaBenchmark, formatVlaResult } from './utils/vlaBenchmark.js';
+import { TEACHER_TASKS } from './utils/macroTeacher.js';
 import { getPosition, getQuaternion, readModelNames, readNames } from './mujocoUtils.js';
 import { matToQuat } from './utils/mjmath.js';
 import { solveIk } from './utils/ik.js';
@@ -744,6 +745,30 @@ export async function initializePythonEnvironment(demo) {
         };
 
         /**
+         * Load a teacher task's scene by key.
+         *
+         * Exists because load_robot() stands the arm on a bare floor via
+         * defaultRobotScene, which has neither the block nor the cameras the
+         * policy needs -- and the only other way to get a task scene was the
+         * dataset panel's Generate button. Loading the same XML the panel and
+         * vla_benchmark use means a hand test and a scored run see one world.
+         */
+        window.robospaceLoadTaskScene = async (key) => {
+            const t = TEACHER_TASKS[key];
+            if (!t) {
+                throw new Error(`unknown task ${key}; have: `
+                    + Object.keys(TEACHER_TASKS).join(', '));
+            }
+            if (!t.sceneXml) {
+                throw new Error(`task ${key} declares no sceneXml, so it relies on `
+                    + 'whatever scene is already loaded');
+            }
+            await window.robospaceLoadScene(t.sceneXml, t.robot, t.id);
+            return { task: key, robot: t.robot,
+                     description: t.description || t.name || key };
+        };
+
+        /**
          * Whether this page can carry VLA requests, as a string rather than a
          * boolean so a failure names itself instead of printing False.
          */
@@ -1229,6 +1254,23 @@ def _vla_gripper_qpos():
             b = float(qpos[nxt]) if nxt < len(qpos) else -a
             return [a, b]
     return [0.0, 0.0]
+
+
+async def load_task_scene(task='so101_pick_block'):
+    """Load a teacher task's scene, block and cameras. Must be awaited.
+
+        await load_task_scene('so101_pick_block')
+
+    load_robot() is not enough for the VLA path: it stands the arm on a bare
+    floor, so there is no block to pick and no declared cameras -- only the
+    Panda-scale synthesised ones. This loads the same XML the dataset panel and
+    vla_benchmark use, so a hand test and a scored run see the same world.
+    """
+    res = await window.robospaceLoadTaskScene(task)
+    print('loaded %s on %s' % (task, res.robot))
+    print('  task text: %s' % (res.description,))
+    print('  cameras  : %s' % (camera_names(),))
+    return res
 
 
 def vla_ready():
@@ -2356,8 +2398,8 @@ def help_api():
                                     'set_gripper', 'run', 'wait', 'skip_playback', 'ik_solve']),
         ('live control (advanced, needs await)', ['control_loop', 'yield_control']),
         ('vla policy (needs await, RoboSpace app only)',
-            ['vla_ready', 'vla_profile', 'vla_control_loop_so101', 'vla_act_so101',
-             'vla_observation_so101', 'vla_benchmark']),
+            ['load_task_scene', 'vla_ready', 'vla_profile', 'vla_control_loop_so101',
+             'vla_act_so101', 'vla_observation_so101', 'vla_benchmark']),
         ('control', ['set_control', 'get_control', 'get_actuator_ranges']),
         ('state', ['get_qpos', 'get_qvel', 'set_qpos', 'set_qvel', 'get_joint',
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),
