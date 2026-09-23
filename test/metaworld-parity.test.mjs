@@ -39,7 +39,6 @@ import path from 'node:path';
 import { loadMujocoModule as load_mujoco } from '../examples/utils/mujocoModule.js';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel, readNames, readModelNames } from '../examples/mujocoUtils.js';
-import { stripFileTextures } from '../examples/utils/robotPacks.js';
 
 const SRC = process.env.MW_ASSETS
   || '/home/ubuntu/vla_model/.venv/lib/python3.12/site-packages/metaworld/assets';
@@ -65,29 +64,57 @@ const BOARD_DRIVE = {                       // hand xyz + gripper gap under a fi
 };
 const BOARD_MODEL = { nbody: 37, ngeom: 52, njnt: 10, ncam: 7, nmocap: 1, neq: 1,
                       nq: 10, nv: 10, nu: 2 };
+
+// This build's OWN trajectory, captured on @mujoco/mujoco 3.14.0. Asserted
+// tightly, because a regression in the browser build is what this test is for.
+const BROWSER_RESET = {
+  0:  [1.1295, 0.1962, 0.3102], 10: [-0.0236, 0.5414, 0.2336],
+  20: [0.0104, 0.5840, 0.2070], 30: [-0.0149, 0.6091, 0.1977],
+  40: [-0.0032, 0.6070, 0.1979], 49: [0.0047, 0.6015, 0.1952],
+};
+const BROWSER_DRIVE = {
+  0:  [0.0047, 0.6017, 0.1950, 1.0000], 15: [-0.0026, 0.7125, 0.1981, 1.0000],
+  30: [-0.0015, 0.7630, 0.2016, 0.8634], 45: [0.0010, 0.7859, 0.2022, 0.6107],
+  59: [0.0015, 0.7868, 0.2027, 0.2849],
+};
+
 const TOL = 1e-3;
+
+// How far the browser is allowed to sit from the board, which now runs a
+// different MuJoCo: the board has 3.3.0 (hard-pinned by metaworld 3.1.1) and
+// this build has 3.14.0. Loosening a tolerance can hide a regression, so the
+// numbers are separated rather than merged: BROWSER_* above is asserted at TOL
+// and catches any change in this build, while these two say how far the two
+// engines have drifted and are expected to move when either is upgraded.
+//
+// Measured, not guessed. The arm settles under the weld from a zeroed qpos, so
+// mid-reset samples are a transient: the gap peaks around iteration 10 and
+// converges to 1.5e-4 by iteration 49 -- tighter than the 1e-3 this test used
+// to demand of it. The drive holds a persistent ~2.6 mm offset.
+//
+// Is 2.6 mm acceptable? sawyer_drawer_open_v3 scores success at
+// handle_error <= 0.03, so it is 8.7% of the budget. And it is not the textures:
+// the same build with stripFileTextures() applied produces a bit-identical
+// trajectory, so all of the difference is the version bump.
+const BOARD_TRANSIENT_TOL = 1e-1;   // mid-settle samples, iterations 10 and 20
+const BOARD_DRIVE_TOL = 5e-3;       // the persistent offset during the drive
 
 const mujoco = await load_mujoco(mujocoLogHooks);
 mujoco.FS.mkdir('/working');
 const mkdirp = (p) => { let c = '';
   for (const s of p.split('/').filter(Boolean)) { c += '/' + s;
     if (!mujoco.FS.analyzePath(c).exists) mujoco.FS.mkdir(c); } };
-let nXml = 0, nBin = 0, dropped = new Set();
+let nXml = 0, nBin = 0, nPng = 0;
 (function stage(rel = '') {
   for (const n of fs.readdirSync(path.join(SRC, rel))) {
     const r = rel ? `${rel}/${n}` : n, abs = path.join(SRC, r);
     if (fs.statSync(abs).isDirectory()) { mkdirp(`/working/mw/${r}`); stage(r); continue; }
     const ext = path.extname(n).toLowerCase();
-    if (ext === '.png') continue;                    // stripFileTextures drops the refs
-    if (!['.xml', '.stl', '.msh', '.obj'].includes(ext)) continue;
+    // PNGs are staged now, not stripped: that is what the migration bought.
+    if (!['.xml', '.stl', '.msh', '.obj', '.png'].includes(ext)) continue;
     mkdirp(path.posix.dirname(`/working/mw/${r}`));
-    if (ext === '.xml') {
-      const t = stripFileTextures(fs.readFileSync(abs, 'utf8'));
-      t.dropped.forEach((d) => dropped.add(d));
-      mujoco.FS.writeFile(`/working/mw/${r}`, t.xml); nXml++;
-    } else {
-      mujoco.FS.writeFile(`/working/mw/${r}`, new Uint8Array(fs.readFileSync(abs))); nBin++;
-    }
+    mujoco.FS.writeFile(`/working/mw/${r}`, new Uint8Array(fs.readFileSync(abs)));
+    if (ext === '.xml') nXml++; else if (ext === '.png') nPng++; else nBin++;
   }
 })();
 
@@ -96,7 +123,7 @@ const check = (name, ok, detail = '') => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`);
   if (!ok) failures++;
 };
-console.log(`staged ${nXml} xml + ${nBin} mesh; textures dropped: ${dropped.size}`);
+console.log(`staged ${nXml} xml + ${nBin} mesh + ${nPng} png (unstripped)`);
 
 // --- 1. every offered scene compiles ----------------------------------------
 const SCENES = ['sawyer_drawer', 'sawyer_door_pull', 'sawyer_faucet',
@@ -126,6 +153,11 @@ check('goal_slidey joint present', jointNames.includes('goal_slidey'));
 // Only the floor is a plane. Planes become Reflectors (mujocoUtils.js:672) and
 // CameraViewer hides every reflector during captureImage, so a plane is invisible
 // to the policy -- the ported scene must swap it for a thin box.
+// Impossible before the migration: the old build could not compile a scene
+// with an image texture at all, and its binding exposed tex_rgb as undefined.
+check('image textures are loaded', model.ntex === 4 && model.tex_data.length === 5179392,
+      `ntex=${model.ntex} tex_data=${model.tex_data.length} nmat=${model.nmat}`);
+
 const planes = [...Array(model.ngeom).keys()].filter((g) => model.geom_type[g] === 0);
 check('exactly one plane geom (the floor)', planes.length === 1, `ids ${planes}`);
 
@@ -150,37 +182,57 @@ const near = (got, want, tol = TOL) =>
 for (let i = 0; i < model.nq; i++) sim.qpos[i] = 0;
 for (let i = 0; i < model.nv; i++) sim.qvel[i] = 0;
 sim.forward();
-let resetOk = true;
+let resetOk = true, boardResetOk = true;
 for (let i = 0; i < SETTLE; i++) {
   for (let k = 0; k < 3; k++) sim.mocap_pos[k] = HAND_INIT[k];
   for (let k = 0; k < 4; k++) sim.mocap_quat[k] = MOCAP_QUAT[k];
   sim.ctrl[0] = -1; sim.ctrl[1] = 1;
   for (let k = 0; k < FRAME_SKIP; k++) sim.step();
-  if (BOARD_RESET[i] && !near(at(hand), BOARD_RESET[i])) {
+  if (BROWSER_RESET[i] && !near(at(hand), BROWSER_RESET[i])) {
     resetOk = false;
     console.log(`        iter ${i}: got [${at(hand).map((v) => v.toFixed(4))}] ` +
-                `want [${BOARD_RESET[i]}]`);
+                `want [${BROWSER_RESET[i]}]`);
+  }
+  if (BOARD_RESET[i]) {
+    // Converged samples must still track the board tightly; mid-settle ones are
+    // a transient and only have to stay in the same basin.
+    const tol = (i >= 30) ? TOL * 10 : BOARD_TRANSIENT_TOL;
+    if (!near(at(hand), BOARD_RESET[i], tol)) {
+      boardResetOk = false;
+      console.log(`        board delta at iter ${i}: got [${at(hand).map((v) => v.toFixed(4))}] ` +
+                  `board [${BOARD_RESET[i]}] tol ${tol}`);
+    }
   }
 }
-check('_reset_hand trajectory matches the board', resetOk,
+check('_reset_hand matches this build\'s own reference', resetOk,
       `final hand [${at(hand).map((v) => v.toFixed(6))}]`);
+check('_reset_hand still converges to the board', boardResetOk,
+      `board ${BOARD_RESET[49]}, here ${at(hand).map((v) => v.toFixed(6))}`);
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-let driveOk = true;
+let driveOk = true, boardDriveOk = true;
 for (let step = 0; step < 60; step++) {
   const a = step < 40 ? [0, 1, 0, -1] : [0, 0, 0, 1];
   for (let i = 0; i < 3; i++)
     sim.mocap_pos[i] = clamp(sim.mocap_pos[i] + clamp(a[i], -1, 1) * SCALE, LOW[i], HIGH[i]);
   sim.ctrl[0] = a[3]; sim.ctrl[1] = -a[3];
   for (let k = 0; k < FRAME_SKIP; k++) sim.step();
-  const want = BOARD_DRIVE[step];
-  if (want && !near([...at(hand), gap()], want)) {
+  const mine = BROWSER_DRIVE[step];
+  if (mine && !near([...at(hand), gap()], mine)) {
     driveOk = false;
     console.log(`        step ${step}: got [${[...at(hand), gap()].map((v) => v.toFixed(4))}] ` +
-                `want [${want}]`);
+                `want [${mine}]`);
+  }
+  const board = BOARD_DRIVE[step];
+  if (board && !near([...at(hand), gap()], board, BOARD_DRIVE_TOL)) {
+    boardDriveOk = false;
+    console.log(`        board delta at step ${step}: got ` +
+                `[${[...at(hand), gap()].map((v) => v.toFixed(4))}] board [${board}]`);
   }
 }
-check('mocap drive trajectory matches the board', driveOk);
+check('mocap drive matches this build\'s own reference', driveOk);
+check('mocap drive stays within 5 mm of the board', boardDriveOk,
+      `board runs MuJoCo 3.3.0, this build 3.14.0`);
 
 // --- 4. per-task reset_model(): drawer, goal marker, starting position -------
 //

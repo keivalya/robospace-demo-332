@@ -42,6 +42,37 @@ import factory from '@mujoco/mujoco';
 /** mjtLightType: SPOT 0, DIRECTIONAL 1, POINT 2, IMAGE 3. */
 const MJ_LIGHT_DIRECTIONAL = 1;
 
+/**
+ * Every `mjtByte` array in the official binding throws on access:
+ *
+ *   BindingError: _emval_take_value has unknown type
+ *                 N10emscripten11memory_viewIbEE
+ *
+ * `memory_view<bool>` is simply not a registered embind type in the published
+ * module, so the getter cannot marshal it. Int32 and Float64 arrays are fine.
+ * Confirmed for jnt_limited, actuator_ctrllimited, actuator_forcelimited,
+ * tendon_limited, light_castshadow, light_active and eq_active0 — an upstream
+ * bug, not a rename, and one the vendored build did not have.
+ *
+ * The per-element accessors marshal correctly (`model.jnt(0).limited === true`),
+ * so each array is rebuilt from those on demand. Rebuilt per access rather than
+ * cached because these are model properties a caller may legitimately mutate,
+ * and a stale cache would be worse than the cost: they are tiny (one byte per
+ * joint or actuator) and read outside hot loops.
+ *
+ * Maps the flat field name to [accessor, count field, property on the element].
+ */
+const BOOL_ARRAY_FIELDS = {
+  jnt_limited: ['jnt', 'njnt', 'limited'],
+  actuator_ctrllimited: ['actuator', 'nu', 'ctrllimited'],
+  actuator_forcelimited: ['actuator', 'nu', 'forcelimited'],
+  actuator_actlimited: ['actuator', 'nu', 'actlimited'],
+  tendon_limited: ['tendon', 'ntendon', 'limited'],
+  light_castshadow: ['light', 'nlight', 'castshadow'],
+  light_active: ['light', 'nlight', 'active'],
+  eq_active0: ['eq', 'neq', 'active0'],
+};
+
 /** The MjData fields rs-demo reads, plus the rest, discovered once from the prototype. */
 function accessorNames(instance) {
   const proto = Object.getPrototypeOf(instance);
@@ -79,6 +110,22 @@ function decorateModel(model) {
       configurable: true,
     });
   }
+  for (const [field, [accessor, countField, prop]] of Object.entries(BOOL_ARRAY_FIELDS)) {
+    if (typeof model[accessor] !== 'function') continue;
+    Object.defineProperty(model, field, {
+      get() {
+        const n = model[countField] ?? 0;
+        const out = new Uint8Array(n);
+        for (let i = 0; i < n; i++) {
+          const el = model[accessor](i);
+          out[i] = el && el[prop] ? 1 : 0;
+        }
+        return out;
+      },
+      configurable: true,
+    });
+  }
+
   if (typeof model.getOptions !== 'function') {
     Object.defineProperty(model, 'getOptions', {
       // The old binding returned a plain object; `opt` is an embind handle, so
