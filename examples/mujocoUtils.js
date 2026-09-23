@@ -618,15 +618,17 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
                 rgbaArray[(p * 4) + 3] = 255; // Full opacity
               }
               texture = new THREE.DataTexture(rgbaArray, width, height, THREE.RGBAFormat, THREE.UnsignedByteType);
-              if (texId == 2) {
-                texture.repeat = new THREE.Vector2(50, 50);
-                texture.wrapS = THREE.RepeatWrapping;
-                texture.wrapT = THREE.RepeatWrapping;
-              } else {
-                texture.repeat = new THREE.Vector2(1, 1);
-                texture.wrapS = THREE.RepeatWrapping;
-                texture.wrapT = THREE.RepeatWrapping;
-              }
+              // Tiling comes from the material, not from a guess. This used to
+              // be `texId == 2 ? 50 : 1`, which is a scene-specific accident:
+              // in Meta-World texture 2 is the floor, which MuJoCo declares as
+              // texrepeat="12 12", so the browser tiled it 50x where the
+              // inference board tiled it 12x. A vision policy is shown that
+              // difference directly.
+              const rx = model.mat_texrepeat ? model.mat_texrepeat[matId * 2]     : 1;
+              const ry = model.mat_texrepeat ? model.mat_texrepeat[matId * 2 + 1] : 1;
+              texture.repeat = new THREE.Vector2(rx > 0 ? rx : 1, ry > 0 ? ry : 1);
+              texture.wrapS = THREE.RepeatWrapping;
+              texture.wrapT = THREE.RepeatWrapping;
               texture.needsUpdate = true;
             } else {
               console.warn(`Texture data insufficient. Required: ${requiredRGBLength}, Available: ${rgbArray ? rgbArray.length : 0}`);

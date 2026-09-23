@@ -1325,6 +1325,11 @@ async def metaworld_observation(prompt):
     }
 
 
+# The drawer position the board signature below was captured at. The comparison
+# is only meaningful if both sides put the drawer in the same place, and
+# metaworld_reset() otherwise draws it from U(-0.1, 0.1) as the board does.
+_MW_SIGNATURE_DRAWER_X = 0.0274
+
 # The board's own corner4 render at the home pose, reduced to an 8x8 luma grid.
 # The browser renders with three.js and WebGL where the board uses MuJoCo's
 # OSMesa rasteriser, and that is the one link in this pipeline that cannot be
@@ -1379,6 +1384,10 @@ async def metaworld_selftest(verbose=True):
     note('corner4 camera present', cam in cams, 'cameras: ' + ', '.join(cams))
     if cam not in cams:
         return results
+
+    # Pin the scene to the exact layout the board signature was captured at,
+    # otherwise the renderer comparison below also measures a drawer that moved.
+    await metaworld_reset(19, _MW_SIGNATURE_DRAWER_X)
 
     w, h = _METAWORLD_PROFILE['capture']
     url = camera_image(cam, w, h, 'jpeg')
