@@ -22,6 +22,7 @@
     "test:metaworld": "node --import ./test/register.mjs test/metaworld-parity.test.mjs",
     "test:metaworld:pack": "node --import ./test/register.mjs test/metaworld-pack.test.mjs",
     "test:blocks": "node --import ./test/register.mjs test/blocks-vla.test.mjs",
+    "check:textures": "node --import ./test/register.mjs tools/check-texture-support.mjs",
     "test:scene": "node --import ./test/register.mjs tools/check-scene.mjs test/fixtures/kitchen_stretch.xml",
     "test:sensors": "node --import ./test/register.mjs test/sensors-cameras.test.mjs",
     "test:challenges": "node --import ./test/register.mjs test/challenge-evaluator.test.mjs",
