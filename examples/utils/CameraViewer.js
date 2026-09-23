@@ -328,7 +328,13 @@ export class CameraViewer {
     const fullH = this._tempVec2.y;
 
     // Temporarily suppress scene reflectors to avoid reflection pass overhead
-    // and prevent Reflector from altering render targets or viewport state
+    // and prevent Reflector from altering render targets or viewport state.
+    //
+    // Inert as of the plane fix: mujocoUtils.js no longer builds ground planes
+    // as Reflectors, precisely because this loop hid them from every captured
+    // frame -- the viewport showed a floor and the policy did not. Kept as
+    // insurance for any scene that introduces one by another route; if nothing
+    // ever does, these two traversals can go.
     const hiddenReflectors = [];
     scene.traverse((obj) => {
       if (obj.isReflector && obj.visible) {

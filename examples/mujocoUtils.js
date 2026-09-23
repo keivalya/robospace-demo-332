@@ -1,6 +1,5 @@
 // mujocoUtils.js
 import * as THREE from 'three';
-import { Reflector  } from './utils/Reflector.js';
 import { clearMjLog, drainMjLog } from './utils/mujocoLog.js';
 import { disposeSceneGraph } from './utils/disposeThree.js';
 import { recordHeap } from './utils/wasmHeap.js';
@@ -670,7 +669,24 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
 
       let mesh = new THREE.Mesh();
       if (type == 0) {
-        mesh = new Reflector( new THREE.PlaneGeometry( 100, 100 ), { clipBias: 0.003,texture: texture } );
+        // A plain mesh, not a Reflector, and this is load-bearing rather than
+        // cosmetic. CameraViewer.captureImage sets visible = false on every
+        // isReflector object for the duration of the capture, because a
+        // Reflector renders the scene into its own render target and doing that
+        // inside an offscreen pass corrupts render-target and viewport state.
+        // The consequence was that ground planes appeared in the viewport but
+        // were absent from every captured frame -- so data collection and any
+        // vision policy saw objects floating over the background.
+        //
+        // A matte floor is also closer to what a policy is trained on: LIBERO
+        // and Meta-World frames have a textured matte ground, so a mirrored one
+        // is a feature no checkpoint has ever seen.
+        //
+        // Geometry stays the same hardcoded 100x100 the Reflector used, so the
+        // viewport is unchanged apart from losing the reflection. MuJoCo's own
+        // plane size is [halfX, halfY, spacing] with 0 meaning infinite, which
+        // is why a fixed large quad is used rather than `size`.
+        mesh = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), material);
         mesh.rotateX( - Math.PI / 2 );
       } else {
         mesh = new THREE.Mesh(geometry, material);

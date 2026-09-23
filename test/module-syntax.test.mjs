@@ -72,6 +72,35 @@ for (const file of files) {
 // Targeted guard for the specific trap above, because a syntax check only catches it
 // when the stray backtick happens to unbalance the file. An *even* number of stray
 // backticks would parse fine and silently truncate the Python source instead.
+// Ground planes must not be Reflectors.
+//
+// CameraViewer.captureImage sets visible = false on every isReflector object
+// for the duration of a capture -- a Reflector renders the scene into its own
+// render target, and doing that inside an offscreen pass corrupts render-target
+// and viewport state. So a plane built as a Reflector shows up in the viewport
+// and is ABSENT from every captured frame, which is what data collection and
+// any vision policy actually consume. The symptom is objects floating over the
+// background, and nothing errors.
+//
+// A source guard rather than a rendered one: building the scene graph needs a
+// WebGL context, and test/three-stub.mjs deliberately implements only the
+// handful of three.js classes the other tests touch. This at least fails loudly
+// if the Reflector is ever reintroduced for geom type 0.
+console.log('\nground planes are plain meshes, not Reflectors');
+{
+  const src = fs.readFileSync(path.join(root, 'examples', 'mujocoUtils.js'), 'utf8');
+  if (/new\s+Reflector\s*\(/.test(src)) {
+    bad('mujocoUtils.js constructs a Reflector; captures will not contain it');
+  } else {
+    ok('no Reflector is constructed for geom type 0');
+  }
+  if (/from\s+'\.\/utils\/Reflector\.js'/.test(src)) {
+    bad('mujocoUtils.js still imports Reflector');
+  } else {
+    ok('the Reflector import is gone');
+  }
+}
+
 console.log('\nthe Python prelude must contain no raw backticks');
 {
   const src = fs.readFileSync(path.join(root, 'examples', 'pythonIntegration.js'), 'utf8');
