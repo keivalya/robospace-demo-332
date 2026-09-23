@@ -738,12 +738,18 @@ export async function initializePythonEnvironment(demo) {
                 // but refuses POST -- GitHub Pages answers 405. Both mean the
                 // same thing: there is no proxy here.
                 if (res.status === 404 || res.status === 405) {
+                    // Name the origin. "it is unavailable on this static page"
+                    // is true but unhelpful when the reader is looking at a URL
+                    // they believe is the deployment, and the difference between
+                    // the two is the entire problem.
+                    const here = (typeof location !== 'undefined' && location.origin) || 'this page';
                     throw new Error(
-                        'VLA inference needs the simulator running inside the RoboSpace app; ' +
-                        'it is unavailable on this static page. To run it yourself: ' +
-                        'clone rs-demo, `npm run dev`, and open http://localhost:8001 — ' +
-                        'that dev server proxies /api/vla/act to the inference board and ' +
-                        'keeps the token server-side.');
+                        'No VLA backend reachable from ' + here + ' (HTTP ' + res.status + '). ' +
+                        'A static host cannot proxy inference, because the board token would ' +
+                        'have to ship in the page. Open the simulator from a dev server that ' +
+                        'proxies /api/vla/act instead — `npm run dev` in rs-demo serves it on ' +
+                        'port 8001 and keeps the token server-side — or run it inside the ' +
+                        'RoboSpace app, which routes through the parent bridge.');
                 }
                 if (!res.ok) {
                     let detail = '';
