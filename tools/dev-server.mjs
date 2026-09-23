@@ -16,11 +16,63 @@
 import http from 'node:http';
 import zlib from 'node:zlib';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.argv[2] || process.env.PORT || 8000);
+
+// ─── VLA proxy ──────────────────────────────────────────────────────────────
+//
+// The demo page cannot hold the inference server's token: it ships from GitHub
+// Pages, where anything in the bundle is public, which is why robospaceVlaAct
+// normally routes through the parent RoboSpace app's API route instead.
+//
+// Locally that leaves the standalone page unable to run a policy at all, which
+// makes the whole Meta-World demo untestable outside the app. This proxy closes
+// that gap for development only: the token stays in this process, the browser
+// sends a same-origin POST, and nothing about the deployed page changes --
+// GitHub Pages has no /api/vla/act, so the existing error still stands there.
+const VLA_URL = process.env.VLA_URL || 'http://127.0.0.1:8000';
+
+function readToken() {
+  if (process.env.VLA_AUTH_TOKEN) return process.env.VLA_AUTH_TOKEN;
+  for (const p of [process.env.VLA_ENV_FILE,
+                   path.join(os.homedir(), 'vla_model', '.env')].filter(Boolean)) {
+    try {
+      const line = fs.readFileSync(p, 'utf8').split('\n')
+        .find((l) => l.startsWith('VLA_AUTH_TOKEN='));
+      if (line) return line.slice('VLA_AUTH_TOKEN='.length).trim().replace(/^['"]|['"]$/g, '');
+    } catch { /* next candidate */ }
+  }
+  return null;
+}
+const VLA_TOKEN = readToken();
+
+async function proxyVla(req, res) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  const body = Buffer.concat(chunks);
+  const headers = { 'content-type': 'application/json' };
+  if (VLA_TOKEN) headers.authorization = `Bearer ${VLA_TOKEN}`;
+  try {
+    const upstream = await fetch(`${VLA_URL}/v1/act`, { method: 'POST', headers, body });
+    const text = await upstream.text();
+    res._sentBytes = Buffer.byteLength(text);
+    res.writeHead(upstream.status, {
+      'content-type': upstream.headers.get('content-type') || 'application/json',
+      'cache-control': 'no-store',
+    }).end(text);
+  } catch (err) {
+    // A refused connection here means the board is not running, which is the
+    // single most likely cause and worth saying rather than a bare 502.
+    const detail = `cannot reach the inference server at ${VLA_URL}: ${err.message}`;
+    const payload = JSON.stringify({ detail });
+    res._sentBytes = Buffer.byteLength(payload);
+    res.writeHead(502, { 'content-type': 'application/json' }).end(payload);
+  }
+}
 
 // .wasm must be exact or WebAssembly.instantiateStreaming refuses the response,
 // which is the one MIME mistake that breaks MuJoCo outright.
@@ -82,6 +134,12 @@ const server = http.createServer((req, res) => {
     ({ pathname } = new URL(req.url, `http://${req.headers.host || 'localhost'}`));
   } catch {
     res.writeHead(400).end('bad request');
+    return;
+  }
+
+  if (pathname === '/api/vla/act') {
+    if (req.method !== 'POST') { res.writeHead(405).end('POST only'); return; }
+    proxyVla(req, res);
     return;
   }
 
@@ -153,4 +211,6 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`rs-demo dev server  http://localhost:${PORT}/  (no-store, serving ${ROOT})`);
+  console.log(`  VLA proxy: POST /api/vla/act -> ${VLA_URL}/v1/act  `
+    + (VLA_TOKEN ? `(token loaded, ${VLA_TOKEN.length} chars)` : '(NO TOKEN -- set VLA_AUTH_TOKEN)'));
 });

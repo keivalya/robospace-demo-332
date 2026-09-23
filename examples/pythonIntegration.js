@@ -713,12 +713,40 @@ export async function initializePythonEnvironment(demo) {
         window.robospaceVlaAct = async (payloadJson) => {
             const bridge = demo.parentBridge;
             const parentOrigin = bridge && bridge.parentOrigin;
-            if (!parentOrigin) {
-                throw new Error(
-                    'VLA inference needs the simulator running inside the RoboSpace app; ' +
-                    'it is unavailable on the standalone demo page.');
-            }
             const payload = typeof payloadJson === 'string' ? JSON.parse(payloadJson) : payloadJson;
+
+            // No parent app: try a same-origin /api/vla/act. tools/dev-server.mjs
+            // provides one and keeps the token in the server process, so the
+            // standalone page is usable locally. GitHub Pages has no such route,
+            // so a 404 there still produces the explanation below rather than a
+            // confusing network error -- and no credential ever ships in the
+            // bundle either way.
+            if (!parentOrigin) {
+                let res;
+                try {
+                    res = await fetch('/api/vla/act', {
+                        method: 'POST',
+                        headers: { 'content-type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                } catch (e) {
+                    throw new Error(
+                        'VLA inference needs the simulator running inside the RoboSpace app, ' +
+                        'or a local dev server proxying /api/vla/act. Neither answered: ' + e.message);
+                }
+                if (res.status === 404) {
+                    throw new Error(
+                        'VLA inference needs the simulator running inside the RoboSpace app; ' +
+                        'it is unavailable on the standalone demo page. ' +
+                        'Running locally? `npm run dev` proxies /api/vla/act to the board.');
+                }
+                if (!res.ok) {
+                    let detail = '';
+                    try { detail = (await res.json()).detail || ''; } catch { /* body not json */ }
+                    throw new Error(`VLA_ACT failed: HTTP ${res.status}${detail ? ' — ' + detail : ''}`);
+                }
+                return await res.json();
+            }
             vlaListen();
             const id = 'vla_' + Date.now().toString(36) + '_' +
                        Math.random().toString(36).slice(2, 8);
@@ -1326,9 +1354,12 @@ async def metaworld_selftest(verbose=True):
                                   ('   ' + detail) if detail else ''))
 
     try:
-        names = [b['name'] for b in _index()['bodies']]
+        # model_info()'s bodies/joints/sites/cameras are lists of NAMES. Only
+        # actuators, jointInfo and sensorInfo are lists of dicts -- indexing a
+        # name with ['name'] raises "string indices must be integers".
+        names = list(_index()['bodies'])
     except Exception as exc:
-        note('scene loaded', False, str(exc)); return results
+        note('Meta-World scene loaded', False, str(exc)); return results
     need = ['hand', 'rightclaw', 'leftclaw', 'mocap']
     note('Meta-World scene loaded', all(n in names for n in need),
          'missing ' + ', '.join(n for n in need if n not in names)
@@ -1362,12 +1393,12 @@ async def metaworld_selftest(verbose=True):
     except Exception as exc:
         note('renderer agrees with the board', False, 'could not compare: %s' % exc)
 
-    st = window.robospaceVlaStatus()
-    ready = bool(st and st.ready)
-    note('board reachable', ready,
-         (st.detail if st and hasattr(st, 'detail') else '') if not ready else 'bridge ready')
-    if not ready:
-        return results
+    # robospaceVlaStatus() returns a STRING, not an object -- 'ready',
+    # 'standalone: ...' or 'not-connected: ...'. It only describes the parent
+    # bridge, and a standalone page can still reach the board through a dev
+    # server proxying /api/vla/act, so this is context rather than a verdict.
+    # The round trip below is what actually decides.
+    print('  ..    transport: %s' % str(window.robospaceVlaStatus()))
 
     try:
         obs = await metaworld_observation(_METAWORLD_TASKS[19])
@@ -1379,6 +1410,8 @@ async def metaworld_selftest(verbose=True):
              'chunk of %d, first action [%s]' % (len(actions), ', '.join('%.3f' % v for v in a0)))
     except Exception as exc:
         note('one inference round trip', False, str(exc))
+        print('        (in the RoboSpace app this routes through the parent; '
+              'standalone it needs a dev server proxying /api/vla/act)')
 
     if verbose:
         bad = [n for n, ok, _ in results if not ok]
@@ -1428,7 +1461,9 @@ async def vla_metaworld(task=19, steps=None, replan=None, prompt=None, verbose=T
             chunks += 1
             if verbose and chunks == 1:
                 print('  first chunk in %.2fs' % ((window.performance.now() - t0) / 1000.0))
-        window.robospaceMetaworldAct(queue.pop(0))
+        a = queue.pop(0)
+        # Positional floats, not a list: see robospaceMetaworldAct in main.js.
+        window.robospaceMetaworldAct(float(a[0]), float(a[1]), float(a[2]), float(a[3]))
         done = i + 1
     wall = (window.performance.now() - t0) / 1000.0
     st = await metaworld_state()

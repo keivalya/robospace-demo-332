@@ -1403,10 +1403,13 @@ window.robospaceMetaworldState = async () => {
 // One policy action: metaworld set_xyz_action + do_simulation, verbatim.
 // The clip is not optional -- recorded actions reach 4.62 on a channel bounded
 // at 1, and without it z overshoots by 462x.
-window.robospaceMetaworldAct = (action) => {
-  const a = Array.from(action, Number);
-  if (a.length !== 4 || a.some((v) => !Number.isFinite(v))) {
-    throw new Error(`action must be 4 finite numbers, got ${JSON.stringify(action)}`);
+// Four positional numbers, not an array: Pyodide hands a Python list across as a
+// PyProxy that this side cannot destructure or Array.from reliably -- the same
+// trap set_control() documents.
+window.robospaceMetaworldAct = (ax, ay, az, agrip) => {
+  const a = [ax, ay, az, agrip].map(Number);
+  if (a.some((v) => !Number.isFinite(v))) {
+    throw new Error(`action must be 4 finite numbers, got [${[ax, ay, az, agrip]}]`);
   }
   const sim = demo.simulation;
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
