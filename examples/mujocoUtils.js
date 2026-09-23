@@ -718,11 +718,22 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
         // and Meta-World frames have a textured matte ground, so a mirrored one
         // is a feature no checkpoint has ever seen.
         //
-        // Geometry stays the same hardcoded 100x100 the Reflector used, so the
-        // viewport is unchanged apart from losing the reflection. MuJoCo's own
-        // plane size is [halfX, halfY, spacing] with 0 meaning infinite, which
-        // is why a fixed large quad is used rather than `size`.
-        mesh = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), material);
+        // MuJoCo's plane size is [halfX, halfY, spacing], where 0 means
+        // infinite. A fixed 100x100 quad was used here for every plane on the
+        // grounds that 0 has to be handled -- but when the size is finite,
+        // ignoring it makes the floor far too large, and that is not cosmetic:
+        // Meta-World's floor is size="4 4 .1", an 8x8 quad, so 100x100 is
+        // 12.5x oversized per axis and fills with lit floor what should be
+        // empty background. Measured against the board's corner4 render, the
+        // nine tiles of its 8x8 luma grid that are pure background came back
+        // +21.5 of 255 too bright for exactly this reason.
+        //
+        // So honour a finite size and keep the large quad only for the
+        // genuinely infinite case.
+        const gsx = model.geom_size[g * 3], gsy = model.geom_size[g * 3 + 1];
+        const planeW = gsx > 0 ? gsx * 2 : 100;
+        const planeH = gsy > 0 ? gsy * 2 : 100;
+        mesh = new THREE.Mesh(new THREE.PlaneGeometry(planeW, planeH), material);
         mesh.rotateX( - Math.PI / 2 );
       } else {
         mesh = new THREE.Mesh(geometry, material);

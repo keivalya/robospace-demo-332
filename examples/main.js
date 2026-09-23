@@ -1622,6 +1622,39 @@ window.robospaceVisualInfo = () => {
            background: bg ? [bg.r, bg.g, bg.b] : null };
 };
 
+// corner4's MJCF orientation leaves MuJoCo's raw render upside down, and the
+// board corrects it with [::-1, ::-1] before the policy or the training data
+// ever sees a frame (vla/metaworld.py FLIP, applied in render_frame). three.js
+// reproduces that same camera faithfully, and captureImage's vertical flip only
+// undoes WebGL's bottom-to-top framebuffer order -- it does not undo the
+// camera's roll. So a browser capture arrives 180 degrees off from every frame
+// this checkpoint was trained on.
+//
+// Measured against the board's 8x8 luma grid: 56.0 as-is versus 25.9 under
+// rot180, with every other orientation of the dihedral group at 30.5 or worse
+// (rot90 38.9, rot270 50.1, fliplr 48.6, flipud 41.4, transpose 30.5). A
+// comment in pythonIntegration.js previously asserted that captureImage
+// "returns the view already upright". It does not, and that assumption is what
+// made the renderer check fail while every other link measured clean.
+window.robospaceRotate180 = async (dataUrl) => {
+  const img = new Image();
+  await new Promise((res, rej) => {
+    img.onload = res;
+    img.onerror = () => rej(new Error('could not decode the captured frame'));
+    img.src = dataUrl;
+  });
+  const c = document.createElement('canvas');
+  c.width = img.width;
+  c.height = img.height;
+  const ctx = c.getContext('2d');
+  // Rotate about the centre rather than scaling by -1 on both axes: equivalent
+  // here, and it stays correct if the frame is ever non-square.
+  ctx.translate(c.width / 2, c.height / 2);
+  ctx.rotate(Math.PI);
+  ctx.drawImage(img, -c.width / 2, -c.height / 2);
+  return c.toDataURL('image/jpeg', 0.85);
+};
+
 window.robospaceLoadMetaworld = async (packId = 'metaworld_drawer') => {
   const { writeGeneratedScene } = await import(versioned('./utils/sceneWriter.js'));
   const { ROBOT_MANIFESTS } = await import(versioned('./utils/robotPacks.js'));

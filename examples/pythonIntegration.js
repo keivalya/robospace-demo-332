@@ -1321,13 +1321,26 @@ async def metaworld_state():
     return [float(v) for v in await window.robospaceMetaworldState()]
 
 
-async def metaworld_observation(prompt):
-    """One observation in the shape the board's /v1/act expects."""
+async def _mw_capture():
+    """The observation frame, oriented the way the board produces it.
+
+    Every Meta-World capture goes through here rather than calling
+    camera_image() directly, because the 180 degree correction is not optional:
+    corner4's camera is rolled, the board undoes it with [::-1, ::-1], and a
+    frame that skips the rotation is upside down to the policy. One helper so
+    the observation, the selftest and the breakdown cannot disagree about it.
+    """
     w, h = _METAWORLD_PROFILE['capture']
     url = camera_image(_METAWORLD_PROFILE['camera'], w, h, 'jpeg')
     if not url:
         raise RuntimeError('camera %r produced no image. Cameras: %s'
                            % (_METAWORLD_PROFILE['camera'], ', '.join(camera_names())))
+    return await window.robospaceRotate180(url)
+
+
+async def metaworld_observation(prompt):
+    """One observation in the shape the board's /v1/act expects."""
+    url = await _mw_capture()
     return {
         'images': {_METAWORLD_PROFILE['image_key']:
                    url.split(',', 1)[1] if ',' in url else url},
@@ -1404,7 +1417,7 @@ async def metaworld_selftest(verbose=True):
     await metaworld_reset(19, _MW_SIGNATURE_DRAWER_X)
 
     w, h = _METAWORLD_PROFILE['capture']
-    url = camera_image(cam, w, h, 'jpeg')
+    url = await _mw_capture()
     note('camera capture works', bool(url),
          '%d KB jpeg at %dx%d' % (len(url) * 3 // 4 // 1024, w, h) if url else 'no image')
     if not url:
@@ -1520,8 +1533,7 @@ async def metaworld_render_report():
     re-check after a change without running the other four checks.
     """
     await metaworld_reset(19, _MW_SIGNATURE_DRAWER_X)
-    w, h = _METAWORLD_PROFILE['capture']
-    url = camera_image(_METAWORLD_PROFILE['camera'], w, h, 'jpeg')
+    url = await _mw_capture()
     sig = [float(v) for v in await window.robospaceLumaSignature(url)]
     _mw_render_breakdown(sig)
     return sig
