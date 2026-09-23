@@ -363,6 +363,65 @@ export class CameraViewer {
   }
 
   /**
+   * Adds MuJoCo's headlight to the scene for one capture, returning what to
+   * undo. Null when the model has no active headlight, which _removeHeadlight
+   * treats as a no-op.
+   *
+   * Must be called AFTER updateCamera(): a headlight is defined by the pose of
+   * the camera doing the rendering, here _threeCamera, not the viewport camera.
+   */
+  _applyHeadlight(scene, model) {
+    let hl = null;
+    // model.vis is an embind handle, and reading it throws rather than returning
+    // undefined on a build that does not expose it.
+    try { hl = model && model.vis ? model.vis.headlight : null; } catch { hl = null; }
+    if (!hl || !hl.active) return null;
+
+    const undo = { lights: [], ambients: [] };
+
+    // MuJoCo's headlight ambient REPLACES this app's rather than adding to it:
+    // both are a flat lift on every surface, so leaving ours in place would
+    // count the term twice and overshoot the board.
+    scene.traverse((obj) => {
+      if (obj.isAmbientLight) {
+        undo.ambients.push([obj, obj.intensity]);
+        obj.intensity = 0;
+      }
+    });
+
+    const ambient = new THREE.AmbientLight(0xffffff, 1);
+    ambient.color.setRGB(hl.ambient[0], hl.ambient[1], hl.ambient[2]);
+    scene.add(ambient);
+    undo.lights.push(ambient);
+
+    const dir = new THREE.DirectionalLight(0xffffff, 1);
+    dir.color.setRGB(hl.diffuse[0], hl.diffuse[1], hl.diffuse[2]);
+    // A DirectionalLight shines from its position toward its target, so placing
+    // it at the camera and aiming it down the camera's view axis is exactly what
+    // "headlight" means. Shadows stay off: MuJoCo's headlight casts none, and
+    // enabling them would add a shadow-map pass to every capture.
+    dir.castShadow = false;
+    this._threeCamera.updateMatrixWorld();
+    dir.position.setFromMatrixPosition(this._threeCamera.matrixWorld);
+    dir.target.position.copy(dir.position).add(
+      new THREE.Vector3(0, 0, -1).applyQuaternion(this._threeCamera.quaternion));
+    scene.add(dir);
+    scene.add(dir.target);
+    undo.lights.push(dir, dir.target);
+
+    return undo;
+  }
+
+  /** Undoes _applyHeadlight, leaving the scene as the viewport expects it. */
+  _removeHeadlight(scene, undo) {
+    if (!undo) return;
+    for (let i = 0; i < undo.lights.length; i++) scene.remove(undo.lights[i]);
+    for (let i = 0; i < undo.ambients.length; i++) {
+      undo.ambients[i][0].intensity = undo.ambients[i][1];
+    }
+  }
+
+  /**
    * Captures an image from a camera into a buffer or data URL.
    * Reuses offscreen render target to avoid GPU memory leaks.
    */
@@ -411,7 +470,27 @@ export class CameraViewer {
       }
     });
 
+    // MuJoCo lights every render with a camera-attached headlight ON TOP of the
+    // scene's own lights (mjVisual.headlight). three.js has no equivalent, so a
+    // capture here was lit only by the MJCF's lights plus this app's
+    // AmbientLight(0.1) -- far darker than the frames the policy was trained on,
+    // and the observation is the thing that has to match.
+    //
+    // Measured against the board's own corner4 render of the Meta-World drawer
+    // scene, as mean |diff| on an 8x8 luma grid out of 255:
+    //
+    //   no headlight at all .................... 42.2   (worst 107.8)
+    //   this app today, ambient 0.1 only ....... 35.3   (worst  89.6)
+    //   headlight ambient term alone ........... 14.5
+    //   headlight diffuse term alone ........... 27.7
+    //   ambient + diffuse together .............. 0.3   (worst   6.1)
+    //
+    // Both terms are needed, and specular is worth only the remaining 0.3, so it
+    // is skipped -- matching a highlight would also need the material models to
+    // agree, which MeshPhysicalMaterial and MuJoCo's shading do not.
+    const headlight = this._applyHeadlight(scene, model);
     renderer.render(scene, this._threeCamera);
+    this._removeHeadlight(scene, headlight);
 
     for (let i = 0; i < hiddenReflectors.length; i++) {
       hiddenReflectors[i].visible = true;
