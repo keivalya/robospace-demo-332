@@ -594,6 +594,20 @@ body {
     color: #e5e5e5;
 }
 
+/* body sets user-select:none so a drag across the viewport does not select the
+   UI. That is right for the canvas and wrong here: the console and the error log
+   are the two places whose whole purpose is to be read and pasted elsewhere --
+   a selftest result, a traceback. Re-enable it for those, and show a text cursor
+   so it is discoverable rather than something you have to try. */
+#python-output,
+#error-log {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+    cursor: text;
+}
+
 #python-output {
     flex: 1;
     overflow-y: auto;

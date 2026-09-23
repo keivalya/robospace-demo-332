@@ -3317,6 +3317,50 @@ export function setupPythonIDE(demo) {
         outputArea.innerHTML = '';
     });
 
+    // Copy the whole buffer in one click.
+    //
+    // navigator.clipboard is unavailable here more often than not: it requires a
+    // secure context, and the dev-server route onto this board is plain HTTP on a
+    // tailnet hostname, which is not one (localhost would be). So try it, and
+    // fall back to the execCommand path, which has no such requirement. Without
+    // the fallback the button would work on the deployed HTTPS site and silently
+    // do nothing exactly where it is needed most.
+    const copyButton = document.getElementById('copy-python');
+    if (copyButton) copyButton.addEventListener('click', async () => {
+        // innerText, not textContent: it honours line breaks between the divs,
+        // where textContent would run every line together.
+        const text = (outputArea.innerText || '').replace(/^OUTPUT\n?/, '').trim();
+        const flash = (msg) => {
+            const was = copyButton.textContent;
+            copyButton.textContent = msg;
+            setTimeout(() => { copyButton.textContent = was; }, 1200);
+        };
+        if (!text) { flash('empty'); return; }
+        try {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                flash('copied');
+                return;
+            }
+        } catch { /* fall through to execCommand */ }
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            // Off-screen but focusable: display:none or visibility:hidden would
+            // make select() a no-op and the copy would silently fail.
+            ta.style.position = 'fixed';
+            ta.style.top = '-1000px';
+            ta.setAttribute('readonly', '');
+            document.body.appendChild(ta);
+            ta.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            flash(ok ? 'copied' : 'select it');
+        } catch {
+            flash('select it');
+        }
+    });
+
     // Stop button — sends SIGINT to Pyodide
     if (stopButton) stopButton.addEventListener('click', () => {
         if (_interruptBuffer) _interruptBuffer[0] = 2; // SIGINT
