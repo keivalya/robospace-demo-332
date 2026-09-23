@@ -26,6 +26,7 @@
 
 import { MENAGERIE_COMMIT, ROBOT_MANIFESTS as MENAGERIE_MANIFESTS } from './robotManifests.js';
 import { METAWORLD_MANIFESTS } from './metaworldManifest.js';
+import { selectedImpl } from './mujocoModule.js';
 
 const REPO = 'google-deepmind/mujoco_menagerie';
 
@@ -248,7 +249,20 @@ function patchRobotXml(packId, xml) {
   return { xml: out, notes, homePose: kf.homePose, dropped: [] };
 }
 
-const PACKS_NEEDING_TEXTURE_STRIP = new Set(['stretch_3', 'metaworld_drawer']);
+// Which packs need their image textures removed before they will compile.
+//
+// This is a capability workaround, not a property of the packs, so it follows
+// the build. The vendored MuJoCo 3.3.2 cannot load an image-file texture at all
+// (`npm run check:textures`); @mujoco/mujoco 3.14.0 can. Stripping when the
+// build can load them is actively harmful — measured on the inference board, a
+// policy shown the real textures scores 4/4 where flat white scores 0/4.
+//
+// stretch_3 stays on the legacy list unconditionally only until its pack is
+// re-verified against the new build; its textures are ArUco fiducials and label
+// decals, which should now survive.
+const PACKS_NEEDING_TEXTURE_STRIP = new Set(
+  selectedImpl() === 'legacy' ? ['stretch_3', 'metaworld_drawer'] : ['stretch_3'],
+);
 
 const isXml = (path) => /\.xml$/i.test(path);
 

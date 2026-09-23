@@ -22,8 +22,12 @@
 //     16 meshes silently go missing.
 //
 // The three <texture file=> references in scene/basic_scene.xml (wood2.png,
-// floor2.png, metal.png) are NOT fetched: this MuJoCo build cannot load an
-// image-file texture, and stripFileTextures() removes the references.
+// floor2.png, metal.png) ARE fetched now. They were not, while the build was
+// the vendored MuJoCo 3.3.2, which could not load an image-file texture at all
+// and had stripFileTextures() remove the references. On @mujoco/mujoco 3.14.0
+// they load, and they matter more than their 1.6 MB suggests: measured on the
+// inference board, a policy shown the real textures scores 4/4 where flat white
+// scores 0/4.
 
 export const METAWORLD_COMMIT = "master";
 export const METAWORLD_REPO = "Farama-Foundation/Metaworld";
@@ -41,8 +45,11 @@ export const METAWORLD_MANIFESTS = {
       { id: 19, text: "Open a drawer" },
       { id: 18, text: "Push and close a drawer" },
     ],
-    totalBytes: 3419814,   // 3.42 MB
+    totalBytes: 5043074,   // 5.04 MB
     files: [
+      { path: "textures/wood2.png", size: 381795 },
+      { path: "textures/floor2.png", size: 1044587 },
+      { path: "textures/metal.png", size: 196878 },
       { path: "sawyer_xyz/sawyer_drawer.xml", size: 808 },
       { path: "scene/basic_scene.xml", size: 3259 },
       { path: "objects/assets/drawer_dependencies.xml", size: 1371 },

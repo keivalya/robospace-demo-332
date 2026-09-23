@@ -22,6 +22,11 @@ import { loadMujocoModule as load_mujoco } from '../examples/utils/mujocoModule.
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel, readNames } from '../examples/mujocoUtils.js';
 import { ensureRobotPack, ROBOT_MANIFESTS } from '../examples/utils/robotPacks.js';
+import { selectedImpl } from '../examples/utils/mujocoModule.js';
+
+// Under MUJOCO_IMPL=legacy the build cannot load image textures, so the pack
+// still strips them and the two texture assertions do not apply.
+const LEGACY = selectedImpl() === 'legacy';
 
 const BOARD_DIMS = { nbody: 37, ngeom: 52, njnt: 10, ncam: 7,
                      nmocap: 1, neq: 1, nq: 10, nv: 10, nu: 2 };
@@ -56,10 +61,20 @@ try {
 }
 check('fetch from upstream', true, `${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
-const stripped = (res.patched || []).find((p) => p.path === 'scene/basic_scene.xml');
-check('the 3 image textures are stripped from basic_scene.xml',
-      !!stripped && /removed 3 image-file texture/.test(stripped.notes.join(' ')),
-      stripped ? stripped.notes.join('; ') : 'basic_scene.xml was not patched');
+// The inverse of what this asserted before the MuJoCo migration. The vendored
+// 3.3.2 build could not load an image-file texture, so basic_scene.xml had its
+// three stripped; 3.14.0 loads them and stripping would now cost the policy
+// everything it gains (4/4 with real textures against 0/4 with flat white,
+// measured on the board).
+const stripped = (res.patched || []).find((p) => p.path === 'scene/basic_scene.xml'
+  && /removed \d+ image-file texture/.test(p.notes.join(' ')));
+if (LEGACY) {
+  check('legacy still strips the image textures', !!stripped,
+        stripped ? stripped.notes.join('; ') : 'expected stripping on the 3.3.2 build');
+} else {
+  check('the image textures are NOT stripped any more', !stripped,
+        stripped ? `still stripping: ${stripped.notes.join('; ')}` : 'basic_scene.xml kept its textures');
+}
 
 let model;
 try {
@@ -73,6 +88,17 @@ try {
 const bad = Object.entries(BOARD_DIMS).filter(([k, v]) => model[k] !== v);
 check('model dimensions match the inference board', bad.length === 0,
       bad.map(([k, v]) => `${k}=${model[k]} want ${v}`).join(' '));
+
+// The pack has to actually carry the pixels, not just stop stripping the
+// references: a missing file is a compile error, but a manifest that never
+// listed the PNGs would leave the scene texture-less with no complaint.
+if (LEGACY) {
+  console.log('  SKIP  the fetched pack carries real texture pixels  (legacy cannot load them)');
+} else {
+  check('the fetched pack carries real texture pixels',
+        model.ntex === 4 && model.tex_data.length === 5179392,
+        `ntex=${model.ntex} tex_data=${model.tex_data.length}`);
+}
 
 const cams = readNames(model, model.name_camadr, model.ncam, 'cam');
 const bodies = readNames(model, model.name_bodyadr, model.nbody, 'body');

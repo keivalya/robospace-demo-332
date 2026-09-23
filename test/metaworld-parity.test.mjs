@@ -36,7 +36,14 @@
 // load.
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadMujocoModule as load_mujoco } from '../examples/utils/mujocoModule.js';
+import { loadMujocoModule as load_mujoco, selectedImpl } from '../examples/utils/mujocoModule.js';
+import { stripFileTextures } from '../examples/utils/robotPacks.js';
+
+// The rollback path has to stay usable: MUJOCO_IMPL=legacy is MuJoCo 3.3.2,
+// which cannot compile a scene containing an image texture at all, so under it
+// the staging strips them and the texture assertion is skipped. Everything else
+// in this file runs identically either way.
+const LEGACY = selectedImpl() === 'legacy';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel, readNames, readModelNames } from '../examples/mujocoUtils.js';
 
@@ -78,6 +85,13 @@ const BROWSER_DRIVE = {
   59: [0.0015, 0.7868, 0.2027, 0.2849],
 };
 
+// Which trajectory *this* build should reproduce exactly. Legacy is MuJoCo
+// 3.3.2 and lands on the board's own numbers (it is one patch release from the
+// board's 3.3.0); the official build is 3.14.0 and has its own. Selecting here
+// rather than loosening a tolerance keeps both paths asserted at 1e-3.
+const OWN_RESET = LEGACY ? BOARD_RESET : BROWSER_RESET;
+const OWN_DRIVE = LEGACY ? BOARD_DRIVE : BROWSER_DRIVE;
+
 const TOL = 1e-3;
 
 // How far the browser is allowed to sit from the board, which now runs a
@@ -112,9 +126,15 @@ let nXml = 0, nBin = 0, nPng = 0;
     const ext = path.extname(n).toLowerCase();
     // PNGs are staged now, not stripped: that is what the migration bought.
     if (!['.xml', '.stl', '.msh', '.obj', '.png'].includes(ext)) continue;
+    if (ext === '.png' && LEGACY) continue;
     mkdirp(path.posix.dirname(`/working/mw/${r}`));
-    mujoco.FS.writeFile(`/working/mw/${r}`, new Uint8Array(fs.readFileSync(abs)));
-    if (ext === '.xml') nXml++; else if (ext === '.png') nPng++; else nBin++;
+    if (ext === '.xml' && LEGACY) {
+      mujoco.FS.writeFile(`/working/mw/${r}`, stripFileTextures(fs.readFileSync(abs, 'utf8')).xml);
+      nXml++;
+    } else {
+      mujoco.FS.writeFile(`/working/mw/${r}`, new Uint8Array(fs.readFileSync(abs)));
+      if (ext === '.xml') nXml++; else if (ext === '.png') nPng++; else nBin++;
+    }
   }
 })();
 
@@ -123,7 +143,8 @@ const check = (name, ok, detail = '') => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`);
   if (!ok) failures++;
 };
-console.log(`staged ${nXml} xml + ${nBin} mesh + ${nPng} png (unstripped)`);
+console.log(`staged ${nXml} xml + ${nBin} mesh + ${nPng} png` +
+            (LEGACY ? '  [legacy: textures stripped]' : '  (unstripped)'));
 
 // --- 1. every offered scene compiles ----------------------------------------
 const SCENES = ['sawyer_drawer', 'sawyer_door_pull', 'sawyer_faucet',
@@ -155,8 +176,12 @@ check('goal_slidey joint present', jointNames.includes('goal_slidey'));
 // to the policy -- the ported scene must swap it for a thin box.
 // Impossible before the migration: the old build could not compile a scene
 // with an image texture at all, and its binding exposed tex_rgb as undefined.
-check('image textures are loaded', model.ntex === 4 && model.tex_data.length === 5179392,
-      `ntex=${model.ntex} tex_data=${model.tex_data.length} nmat=${model.nmat}`);
+if (LEGACY) {
+  console.log('  SKIP  image textures are loaded  (MUJOCO_IMPL=legacy cannot load them)');
+} else {
+  check('image textures are loaded', model.ntex === 4 && model.tex_data.length === 5179392,
+        `ntex=${model.ntex} tex_data=${model.tex_data.length} nmat=${model.nmat}`);
+}
 
 const planes = [...Array(model.ngeom).keys()].filter((g) => model.geom_type[g] === 0);
 check('exactly one plane geom (the floor)', planes.length === 1, `ids ${planes}`);
@@ -188,10 +213,10 @@ for (let i = 0; i < SETTLE; i++) {
   for (let k = 0; k < 4; k++) sim.mocap_quat[k] = MOCAP_QUAT[k];
   sim.ctrl[0] = -1; sim.ctrl[1] = 1;
   for (let k = 0; k < FRAME_SKIP; k++) sim.step();
-  if (BROWSER_RESET[i] && !near(at(hand), BROWSER_RESET[i])) {
+  if (OWN_RESET[i] && !near(at(hand), OWN_RESET[i])) {
     resetOk = false;
     console.log(`        iter ${i}: got [${at(hand).map((v) => v.toFixed(4))}] ` +
-                `want [${BROWSER_RESET[i]}]`);
+                `want [${OWN_RESET[i]}]`);
   }
   if (BOARD_RESET[i]) {
     // Converged samples must still track the board tightly; mid-settle ones are
@@ -217,7 +242,7 @@ for (let step = 0; step < 60; step++) {
     sim.mocap_pos[i] = clamp(sim.mocap_pos[i] + clamp(a[i], -1, 1) * SCALE, LOW[i], HIGH[i]);
   sim.ctrl[0] = a[3]; sim.ctrl[1] = -a[3];
   for (let k = 0; k < FRAME_SKIP; k++) sim.step();
-  const mine = BROWSER_DRIVE[step];
+  const mine = OWN_DRIVE[step];
   if (mine && !near([...at(hand), gap()], mine)) {
     driveOk = false;
     console.log(`        step ${step}: got [${[...at(hand), gap()].map((v) => v.toFixed(4))}] ` +
