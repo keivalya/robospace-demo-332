@@ -559,15 +559,33 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
             normal_buffer[v + 2] = -temp;
           }
 
-          let uv_buffer = model.mesh_texcoord.subarray(
-             model.mesh_texcoordadr[meshID] * 2,
-            (model.mesh_texcoordadr[meshID]  + model.mesh_vertnum[meshID]) * 2);
           let triangle_buffer = model.mesh_face.subarray(
              model.mesh_faceadr[meshID] * 3,
             (model.mesh_faceadr[meshID]  + model.mesh_facenum[meshID]) * 3);
           geometry.setAttribute("position", new THREE.BufferAttribute(vertex_buffer, 3));
           geometry.setAttribute("normal"  , new THREE.BufferAttribute(normal_buffer, 3));
-          geometry.setAttribute("uv"      , new THREE.BufferAttribute(    uv_buffer, 2));
+
+          // Only attach uvs when the mesh actually has them. MuJoCo sets
+          // mesh_texcoordadr to -1 for a mesh with no texture coordinates, and
+          // subarray(-2, ...) does not error -- a negative start counts from the
+          // end, so it quietly returns a SHORT array. The old code then set a uv
+          // attribute claiming 0 vertices against however many positions the
+          // mesh has, and WebGL rejected every draw call with
+          //
+          //   GL_INVALID_OPERATION: glDrawElements: Vertex buffer is not big
+          //   enough for the draw call
+          //
+          // All 16 meshes in Meta-World's drawer scene have texcoordadr = -1, so
+          // the whole scene rendered as errors. A mesh without uvs simply does
+          // not get the attribute; three.js is fine with that.
+          const uvAdr = model.mesh_texcoordadr[meshID];
+          if (uvAdr >= 0) {
+            const uv_buffer = model.mesh_texcoord.subarray(
+              uvAdr * 2, (uvAdr + model.mesh_vertnum[meshID]) * 2);
+            if (uv_buffer.length === model.mesh_vertnum[meshID] * 2) {
+              geometry.setAttribute("uv", new THREE.BufferAttribute(uv_buffer, 2));
+            }
+          }
           geometry.setIndex    (Array.from(triangle_buffer));
           meshes[meshID] = geometry;
         } else {
@@ -661,10 +679,17 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
           color: new THREE.Color(color[0], color[1], color[2]),
           transparent: color[3] < 1.0,
           opacity: color[3],
-          specularIntensity: model.geom_matid[g] != -1 ?       model.mat_specular   [model.geom_matid[g]] *0.5 : undefined,
-          reflectivity     : model.geom_matid[g] != -1 ?       model.mat_reflectance[model.geom_matid[g]] : undefined,
-          roughness        : model.geom_matid[g] != -1 ? 1.0 - model.mat_shininess  [model.geom_matid[g]] : undefined,
-          metalness        : model.geom_matid[g] != -1 ? 0.1 : undefined,
+          // Spread these in only when the geom has a material. Passing an
+          // explicit `undefined` is not the same as omitting a key: three.js
+          // warns "THREE.Material: 'roughness' parameter is undefined" for each
+          // one, which on a scene this size is hundreds of console lines that
+          // bury real errors.
+          ...(model.geom_matid[g] != -1 ? {
+            specularIntensity:       model.mat_specular   [model.geom_matid[g]] * 0.5,
+            reflectivity     :       model.mat_reflectance[model.geom_matid[g]],
+            roughness        : 1.0 - model.mat_shininess  [model.geom_matid[g]],
+            metalness        : 0.1,
+          } : {}),
           ...(texture ? { map: texture } : {}),
         });
       }

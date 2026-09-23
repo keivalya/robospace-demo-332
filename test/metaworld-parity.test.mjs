@@ -183,6 +183,30 @@ if (LEGACY) {
         `ntex=${model.ntex} tex_data=${model.tex_data.length} nmat=${model.nmat}`);
 }
 
+// Every mesh's index buffer must stay inside its own vertex count, and a mesh
+// with no texture coordinates must not claim any. MuJoCo sets
+// mesh_texcoordadr = -1 for those, and subarray(-2, ...) does not error -- it
+// counts from the end and quietly returns a short array, so the uv attribute
+// ends up describing 0 vertices against however many positions the mesh has.
+// WebGL then rejects every draw call with "Vertex buffer is not big enough for
+// the draw call", which is invisible from Node and buried under hundreds of
+// lines in a browser console. All 16 meshes in this scene have no texcoords.
+{
+  let meshesOk = true, noUv = 0;
+  for (let i = 0; i < model.nmesh; i++) {
+    const vertnum = model.mesh_vertnum[i];
+    const adr = model.mesh_texcoordadr[i];
+    if (adr < 0) { noUv++; continue; }
+    const uvLen = model.mesh_texcoord.subarray(adr * 2, (adr + vertnum) * 2).length;
+    if (uvLen !== vertnum * 2) {
+      meshesOk = false;
+      console.log(`        mesh ${i}: uv length ${uvLen}, positions need ${vertnum * 2}`);
+    }
+  }
+  check('no mesh would get a short uv attribute', meshesOk,
+        `${noUv}/${model.nmesh} meshes have no texcoords and must be skipped`);
+}
+
 const planes = [...Array(model.ngeom).keys()].filter((g) => model.geom_type[g] === 0);
 check('exactly one plane geom (the floor)', planes.length === 1, `ids ${planes}`);
 

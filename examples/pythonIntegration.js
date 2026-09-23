@@ -734,11 +734,16 @@ export async function initializePythonEnvironment(demo) {
                         'VLA inference needs the simulator running inside the RoboSpace app, ' +
                         'or a local dev server proxying /api/vla/act. Neither answered: ' + e.message);
                 }
-                if (res.status === 404) {
+                // 404 from a static host, 405 from one that serves the path
+                // but refuses POST -- GitHub Pages answers 405. Both mean the
+                // same thing: there is no proxy here.
+                if (res.status === 404 || res.status === 405) {
                     throw new Error(
                         'VLA inference needs the simulator running inside the RoboSpace app; ' +
-                        'it is unavailable on the standalone demo page. ' +
-                        'Running locally? `npm run dev` proxies /api/vla/act to the board.');
+                        'it is unavailable on this static page. To run it yourself: ' +
+                        'clone rs-demo, `npm run dev`, and open http://localhost:8001 — ' +
+                        'that dev server proxies /api/vla/act to the inference board and ' +
+                        'keeps the token server-side.');
                 }
                 if (!res.ok) {
                     let detail = '';
