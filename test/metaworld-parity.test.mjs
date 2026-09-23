@@ -179,5 +179,62 @@ for (let step = 0; step < 60; step++) {
 }
 check('mocap drive trajectory matches the board', driveOk);
 
+// --- 4. per-task reset_model(): drawer, goal marker, starting position -------
+//
+// _reset_hand alone is not a reset. Each task also places the drawer, places the
+// *visible* goal marker, and sets the drawer's starting position -- and the
+// marker is rendered into the frame the policy consumes, so getting it wrong
+// points the policy at nothing. This mirrors robospaceMetaworldReset in
+// examples/main.js; the expected values come from
+// metaworld/envs/sawyer_drawer_{open,close}_v3.py.
+const TASK_RESET = {
+  19: { goalOffsetY: -0.36, slide: 0.0 },     // open:  goal 0.16 + maxDist 0.20 out front
+  18: { goalOffsetY: -0.16, slide: -0.15 },   // close: goal at the frame, drawer starts out
+};
+const sitesN = readNames(model, model.name_siteadr, model.nsite, 'site');
+const jointsN = readModelNames(model).jointNames;
+const drawerB = bodies.indexOf('drawer'), goalS = sitesN.indexOf('goal'),
+      slideJ = jointsN.indexOf('goal_slidey'), linkB = bodies.indexOf('drawer_link');
+check('drawer, goal site and drawer_link all present',
+      drawerB >= 0 && goalS >= 0 && slideJ >= 0 && linkB >= 0);
+
+const DRAWER_X = 0.0274;                      // the board's seed-0 draw
+function resetForTask(taskId, x) {
+  const cfg = TASK_RESET[taskId];
+  for (let i = 0; i < model.neq; i++) {
+    if (model.eq_type[i] !== 1) continue;
+    for (let k = 0; k < stride; k++) model.eq_data[i * stride + k] = WELD_EQ_DATA[k] ?? 0;
+  }
+  model.body_pos[drawerB * 3] = x; model.body_pos[drawerB * 3 + 1] = 0.9; model.body_pos[drawerB * 3 + 2] = 0;
+  model.site_pos[goalS * 3] = x;
+  model.site_pos[goalS * 3 + 1] = 0.9 + cfg.goalOffsetY;
+  model.site_pos[goalS * 3 + 2] = 0.09;
+  for (let i = 0; i < model.nq; i++) sim.qpos[i] = 0;
+  for (let i = 0; i < model.nv; i++) sim.qvel[i] = 0;
+  sim.qpos[model.jnt_qposadr[slideJ]] = cfg.slide;
+  sim.forward();
+  for (let i = 0; i < SETTLE; i++) {
+    for (let k = 0; k < 3; k++) sim.mocap_pos[k] = HAND_INIT[k];
+    for (let k = 0; k < 4; k++) sim.mocap_quat[k] = MOCAP_QUAT[k];
+    sim.ctrl[0] = -1; sim.ctrl[1] = 1;
+    for (let k = 0; k < FRAME_SKIP; k++) sim.step();
+  }
+  sim.qpos[model.jnt_qposadr[slideJ]] = cfg.slide;
+  sim.forward();
+}
+for (const [taskId, wantGoalY, wantSlide, label] of
+     [[19, 0.54, 0.0, 'shut'], [18, 0.74, -0.15, 'open']]) {
+  resetForTask(taskId, DRAWER_X);
+  const goal = [model.site_pos[goalS * 3], model.site_pos[goalS * 3 + 1], model.site_pos[goalS * 3 + 2]];
+  const slide = sim.qpos[model.jnt_qposadr[slideJ]];
+  check(`task ${taskId}: goal marker at the task's target`,
+        near(goal, [DRAWER_X, wantGoalY, 0.09]),
+        `[${goal.map((v) => v.toFixed(4))}]`);
+  check(`task ${taskId}: drawer starts ${label}`, Math.abs(slide - wantSlide) < TOL,
+        `goal_slidey ${slide.toFixed(4)}, drawer_link y ${sim.xpos[linkB * 3 + 1].toFixed(4)}`);
+  check(`task ${taskId}: hand still homed after the task reset`,
+        near(at(hand), BOARD_RESET[49]), `[${at(hand).map((v) => v.toFixed(4))}]`);
+}
+
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

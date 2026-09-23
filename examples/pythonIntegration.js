@@ -1286,13 +1286,22 @@ async def load_metaworld(pack='metaworld_drawer'):
     return res
 
 
-async def metaworld_reset():
-    """Return the arm to Meta-World's home pose and re-apply the mocap weld.
+async def metaworld_reset(task=19, drawer_x=None):
+    """Reset for a task: place the drawer and goal, then home the arm.
 
-    Call between episodes. The weld patch is not optional: without it the hand
-    sags about 19 cm below the mocap target and the policy looks broken.
+        await metaworld_reset(19)      # drawer shut, goal marker out front
+        await metaworld_reset(18)      # drawer already open, goal at the frame
+
+    The task argument is not cosmetic. Each Meta-World task places the drawer,
+    places the *visible* goal marker, and sets the drawer's starting position,
+    and the marker is rendered into the frame the policy consumes. Reset for the
+    wrong task and the policy is looking at the wrong target; reset for none at
+    all and "Push and close a drawer" starts with the drawer already shut.
+
+    'drawer_x' pins the drawer's left-right position, which is otherwise drawn
+    from U(-0.1, 0.1) as on the board -- pass a number to repeat an episode.
     """
-    res = await window.robospaceMetaworldReset()
+    res = await window.robospaceMetaworldReset(task, drawer_x)
     return [float(v) for v in res.state]
 
 
@@ -1421,7 +1430,8 @@ async def metaworld_selftest(verbose=True):
     return results
 
 
-async def vla_metaworld(task=19, steps=None, replan=None, prompt=None, verbose=True):
+async def vla_metaworld(task=19, steps=None, replan=None, prompt=None,
+                        drawer_x=None, verbose=True):
     """Drive the Meta-World Sawyer with the VLA policy on the board.
 
         await load_metaworld()
@@ -1440,12 +1450,14 @@ async def vla_metaworld(task=19, steps=None, replan=None, prompt=None, verbose=T
     if task not in _METAWORLD_TASKS:
         raise ValueError('unknown task %r. Have: %s'
                          % (task, ', '.join(str(k) for k in sorted(_METAWORLD_TASKS))))
+    # The scene is reset for 'task'; only the sentence changes when 'prompt' is
+    # given. That is the whole point -- same pixels, different words.
     text = _METAWORLD_TASKS[task] if prompt is None else prompt
     off_distribution = prompt is not None and prompt not in _METAWORLD_TASKS.values()
     steps = _METAWORLD_PROFILE['max_steps'] if steps is None else int(steps)
     replan = _METAWORLD_PROFILE['replan'] if replan is None else int(replan)
 
-    await metaworld_reset()
+    await metaworld_reset(task, drawer_x)
     if verbose:
         print('task %d: "%s"%s' % (task, text,
               '   <- your own sentence, not a training string' if off_distribution else ''))

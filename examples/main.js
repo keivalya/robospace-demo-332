@@ -1370,22 +1370,75 @@ function mwPatchWeld() {
   return patched;
 }
 
-// Meta-World's _reset_hand, verbatim: zero the state, then 50 iterations that
-// re-pin the mocap body and step with the gripper open.
-window.robospaceMetaworldReset = async () => {
+// Per-task reset_model(). _reset_hand alone is NOT a reset: each task also
+// places the drawer, places the *visible* goal marker, and sets the drawer's
+// starting position. Skipping that is why a first version could not open the
+// drawer -- the policy could see a goal marker sitting wherever the MJCF left
+// it, and drawer-close started with the drawer already shut, so there was
+// nothing to close.
+//
+// Numbers read off the board (metaworld/envs/sawyer_drawer_{open,close}_v3.py):
+//   both:   body("drawer").pos = [x, 0.9, 0],  x ~ U(-0.1, 0.1)
+//   open:   site("goal").pos = drawer + [0, -0.16 - 0.20, 0.09],  slide  0.00
+//   close:  site("goal").pos = drawer + [0, -0.16,        0.09],  slide -0.15
+// Note maxDist differs between them: 0.20 for open, 0.15 for close.
+const MW_TASK_RESET = {
+  19: { goalOffsetY: -0.36, slide: 0.0 },     // "Open a drawer"
+  18: { goalOffsetY: -0.16, slide: -0.15 },   // "Push and close a drawer"
+};
+
+function mwNameIndex(kind, adrArray, count, name) {
+  const { readNames } = mwNamesCache;
+  return readNames(demo.model, adrArray, count, kind).indexOf(name);
+}
+let mwNamesCache = {};
+
+window.robospaceMetaworldReset = async (taskId = 19, drawerX = null) => {
   const sim = demo.simulation, m = demo.model;
+  const cfg = MW_TASK_RESET[taskId];
+  if (!cfg) throw new Error(`no reset for task ${taskId}; have ${Object.keys(MW_TASK_RESET)}`);
+  if (!mwNamesCache.readNames) {
+    mwNamesCache = await import(versioned('./mujocoUtils.js'));
+  }
+  const { readNames } = mwNamesCache;
+  const bodies = readNames(m, m.name_bodyadr, m.nbody, 'body');
+  const sites  = readNames(m, m.name_siteadr, m.nsite, 'site');
+  const joints = readNames(m, m.name_jntadr, m.njnt, 'joint');
+  const bi = bodies.indexOf('drawer'), si = sites.indexOf('goal'), ji = joints.indexOf('goal_slidey');
+  if (bi < 0 || si < 0 || ji < 0) {
+    throw new Error(`not a Meta-World drawer scene (drawer=${bi} goal=${si} goal_slidey=${ji})`);
+  }
+
   const welds = mwPatchWeld();
+
+  // Place the drawer, then the goal marker relative to it. The marker is not
+  // decoration: it is rendered into the frame the policy consumes, and it is
+  // how the policy knows where "open" means.
+  const x = drawerX === null ? (Math.random() * 0.2 - 0.1) : Number(drawerX);
+  m.body_pos[bi * 3] = x; m.body_pos[bi * 3 + 1] = 0.9; m.body_pos[bi * 3 + 2] = 0;
+  m.site_pos[si * 3] = x;
+  m.site_pos[si * 3 + 1] = 0.9 + cfg.goalOffsetY;
+  m.site_pos[si * 3 + 2] = 0.09;
+
   for (let i = 0; i < m.nq; i++) sim.qpos[i] = 0;
   for (let i = 0; i < m.nv; i++) sim.qvel[i] = 0;
+  sim.qpos[m.jnt_qposadr[ji]] = cfg.slide;      // open tasks start shut, close tasks start open
   sim.forward();
+
   for (let i = 0; i < MW_SETTLE_ITERS; i++) {
     for (let k = 0; k < 3; k++) sim.mocap_pos[k] = MW_HAND_INIT[k];
     for (let k = 0; k < 4; k++) sim.mocap_quat[k] = MW_MOCAP_QUAT[k];
     sim.ctrl[0] = -1; sim.ctrl[1] = 1;
     for (let k = 0; k < MW_FRAME_SKIP; k++) sim.step();
   }
+  // _reset_hand steps the drawer joint too; restore it so the settle cannot
+  // drift the starting position the task depends on.
+  sim.qpos[m.jnt_qposadr[ji]] = cfg.slide;
+  sim.forward();
+
   demo.simClock?.advance(MW_SETTLE_ITERS * MW_FRAME_SKIP, m.getOptions?.().timestep ?? 0);
-  return { welds, state: await window.robospaceMetaworldState() };
+  return { welds, task: taskId, drawerX: x, slide: cfg.slide,
+           state: await window.robospaceMetaworldState() };
 };
 
 // [hand.x, hand.y, hand.z, gripper_distance_apart] -- the 4-D vector the policy
@@ -1467,7 +1520,7 @@ window.robospaceLoadMetaworld = async (packId = 'metaworld_drawer') => {
     entryXmlPath: manifest.entry,       // the pack entry IS the scene
   });
   for (const p of result.patched) say(`  patched ${p.path}: ${p.notes.join('; ')}`, 'warn');
-  const reset = await window.robospaceMetaworldReset();
+  const reset = await window.robospaceMetaworldReset(19);
   const st = reset.state.map((v) => v.toFixed(4)).join(', ');
   say(`Loaded in ${((performance.now() - started) / 1000).toFixed(1)}s — weld patched (${reset.welds}), hand at [${st}]`);
   return { ...result, tasks: manifest.tasks || [], state: reset.state };
