@@ -110,6 +110,26 @@ function decorateModel(model) {
       configurable: true,
     });
   }
+  // `mat_texid` gained a second dimension: MuJoCo >=3.2 stores one texture per
+  // *role* (RGB, normal, occlusion, ...), so the array is nmat x mjNTEXROLE
+  // rather than nmat. Indexing it the old way reads material 0's role slots and
+  // silently yields -1 for every material — a rename would have been kinder.
+  //
+  // Presented here in the old shape, taking the RGB role, so the render path in
+  // mujocoUtils.js keeps working against either build. mjNTEXROLE is not
+  // exported, so derive the stride rather than hardcoding 10.
+  const MJ_TEXROLE_RGB = 1;
+  if (model.nmat > 0 && model.mat_texid?.length > model.nmat) {
+    const full = model.mat_texid;                 // read once, through the real getter
+    const stride = full.length / model.nmat;
+    const rgbOnly = new Int32Array(model.nmat);
+    for (let i = 0; i < model.nmat; i++) rgbOnly[i] = full[i * stride + MJ_TEXROLE_RGB];
+    // A snapshot, not a live view. Safe because mat_texid is static model data
+    // that nothing here mutates, and a getter that re-read the prototype would
+    // recurse into this own property via embind's validateThis.
+    Object.defineProperty(model, 'mat_texid', { value: rgbOnly, configurable: true });
+  }
+
   for (const [field, [accessor, countField, prop]] of Object.entries(BOOL_ARRAY_FIELDS)) {
     if (typeof model[accessor] !== 'function') continue;
     Object.defineProperty(model, field, {

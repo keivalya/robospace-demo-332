@@ -162,8 +162,15 @@ if (_origStreaming) {
   };
 }
 
+// Which .wasm the page actually fetches, for the load-time measurement below.
+// Kept in step with examples/utils/mujocoModule.js: the official build ships its
+// own binary beside its glue in dist/mujoco/, and only MUJOCO_IMPL=legacy (or
+// ?mj=legacy) still uses the vendored 3.3.2 one.
 const WASM_URL = (() => {
-  try { return new URL('../dist/mujoco_wasm.wasm', import.meta.url).href; }
+  const legacy = typeof location !== 'undefined'
+    && new URLSearchParams(location.search).get('mj') === 'legacy';
+  const rel = legacy ? '../dist/mujoco_wasm.wasm' : '../dist/mujoco/mujoco.wasm';
+  try { return new URL(rel, import.meta.url).href; }
   catch (_) { return ''; }
 })();
 
