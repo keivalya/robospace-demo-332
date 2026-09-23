@@ -301,8 +301,12 @@ export class RoboSpaceDemo {
     this.camera.position.set(2.0, 1.7, 1.7);
     this.scene.add(this.camera);
 
-    this.scene.background = new THREE.Color(0.15, 0.25, 0.35);
-    this.scene.fog = new THREE.Fog(this.scene.background, 15, 25.5);
+    // Named and kept on the instance because the Meta-World path swaps it for
+    // MuJoCo's grey and loadSceneFromURL has to put it back -- scene.background
+    // survives a scene load, so an unrestored override tints every later scene.
+    this.defaultBackground = new THREE.Color(0.15, 0.25, 0.35);
+    this.scene.background = this.defaultBackground.clone();
+    this.scene.fog = new THREE.Fog(this.scene.background.clone(), 15, 25.5);
 
     this.ambientLight = new THREE.AmbientLight(0xffffff, 0.1);
     this.ambientLight.name = 'AmbientLight';
@@ -1580,6 +1584,10 @@ window.robospaceLumaSignature = async (dataUrl, grid = 8) => {
   return out;
 };
 
+// What MuJoCo's rasteriser clears the Meta-World frame to, read off the board's
+// corner4 render. three.js has no equivalent default, so it has to be stated.
+const MUJOCO_CLEAR_COLOR = new THREE.Color(127 / 255, 126 / 255, 122 / 255);
+
 window.robospaceLoadMetaworld = async (packId = 'metaworld_drawer') => {
   const { writeGeneratedScene } = await import(versioned('./utils/sceneWriter.js'));
   const { ROBOT_MANIFESTS } = await import(versioned('./utils/robotPacks.js'));
@@ -1598,6 +1606,19 @@ window.robospaceLoadMetaworld = async (packId = 'metaworld_drawer') => {
     entryXmlPath: manifest.entry,       // the pack entry IS the scene
   });
   for (const p of result.patched) say(`  patched ${p.path}: ${p.notes.join('; ')}`, 'warn');
+  // MuJoCo's offscreen renderer clears to a flat grey; this app defaults to a
+  // dark blue. The policy is shown the capture, not the viewport, so that
+  // difference is distribution shift rather than decoration. Measured on the
+  // board's own corner4 frame: the background is 27.3% of the pixels, and
+  // recolouring it to this app's blue moves the 8x8 luma signature by mean 16.7
+  // and worst 61.3 of 255 -- against metaworld_selftest()'s 25.0 threshold, on
+  // its own most of the budget. The value is the board's measured clear colour,
+  // uniform to std 2.16 over the top-right 80x80 block of that frame.
+  //
+  // Set here rather than globally so every other scene keeps its own look, and
+  // restored by loadSceneFromURL on the next load.
+  demo.scene.background = MUJOCO_CLEAR_COLOR.clone();
+  if (demo.scene.fog) demo.scene.fog.color.copy(MUJOCO_CLEAR_COLOR);
   const reset = await window.robospaceMetaworldReset(19);
   const st = reset.state.map((v) => v.toFixed(4)).join(', ');
   say(`Loaded in ${((performance.now() - started) / 1000).toFixed(1)}s — weld patched (${reset.welds}), hand at [${st}]`);

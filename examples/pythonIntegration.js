@@ -1367,8 +1367,11 @@ async def metaworld_selftest(verbose=True):
         await load_metaworld()
         await metaworld_selftest()
 
-    Six checks, in the order a failure would cascade: scene, camera, capture,
-    renderer agreement with the board, board reachable, and one real inference.
+    Five checks, in the order a failure would cascade: scene, camera, capture,
+    renderer agreement with the board, and one real inference. The transport
+    line between the last two is informational, not a check -- a standalone page
+    reaching the board through a dev server proxy reports 'standalone' there and
+    still passes the round trip, so only the round trip decides.
     """
     results = []
 

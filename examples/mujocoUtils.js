@@ -441,6 +441,15 @@ export async function loadSceneFromURL(mujoco, filename, parent) {
       parent.dragStateManager.reset();
     }
 
+    // scene.background survives a load, because the scene object is reused and
+    // only the "MuJoCo Root" group below is rebuilt. The Meta-World path sets it
+    // to MuJoCo's grey so the policy sees the background it was trained on;
+    // without this restore, that grey would follow every scene loaded after it.
+    if (parent.defaultBackground && parent.scene) {
+      parent.scene.background = parent.defaultBackground.clone();
+      if (parent.scene.fog) parent.scene.fog.color.copy(parent.defaultBackground);
+    }
+
     // Clean up any existing MuJoCo Root group in the three.js scene.
     //
     // Must happen BEFORE the geometry-building loop below, so a texture the next
