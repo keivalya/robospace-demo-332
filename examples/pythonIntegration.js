@@ -1422,6 +1422,11 @@ async def metaworld_selftest(verbose=True):
         note('renderer agrees with the board', mean < 25.0,
              'mean |diff| %.1f, worst %.1f of 255 over an 8x8 luma grid%s'
              % (mean, worst, '' if mean < 25.0 else '  <- the policy sees a different scene'))
+        # A failing check that only reports its own magnitude makes the next step
+        # a guess. Print the breakdown right here so one run carries everything
+        # needed to tell orientation from lighting from geometry.
+        if mean >= 25.0:
+            _mw_render_breakdown(sig)
     except Exception as exc:
         note('renderer agrees with the board', False, 'could not compare: %s' % exc)
 
@@ -1453,21 +1458,17 @@ async def metaworld_selftest(verbose=True):
     return results
 
 
-async def metaworld_render_report():
+def _mw_render_breakdown(sig):
     """Say WHICH part of the frame disagrees with the board, not just how much.
 
-        await load_metaworld()
-        await metaworld_render_report()
-
-    metaworld_selftest() reports one aggregate, and three very different faults
-    produce the same one: the image being oriented differently, the whole frame
-    being uniformly brighter or darker, and a genuine localised difference in
-    geometry or materials. This separates them.
+    Three very different faults produce the same aggregate: the image being
+    oriented differently, the whole frame being uniformly brighter or darker,
+    and a genuine localised difference in geometry or materials. Printed
+    automatically whenever the selftest's renderer check fails, because an
+    aggregate on its own sends you guessing -- measured against this board,
+    orientation alone cannot exceed mean 40.0, so a larger number rules it out
+    rather than leaving it open.
     """
-    await metaworld_reset(19, _MW_SIGNATURE_DRAWER_X)
-    w, h = _METAWORLD_PROFILE['capture']
-    url = camera_image(_METAWORLD_PROFILE['camera'], w, h, 'jpeg')
-    sig = [float(v) for v in await window.robospaceLumaSignature(url)]
     b = list(_MW_BOARD_SIGNATURE)
     rows = [sig[r * 8:(r + 1) * 8] for r in range(8)]
 
@@ -1507,6 +1508,22 @@ async def metaworld_render_report():
         print('headlight: %s' % (v.get('headlight'),))
         print('nlight %s   lights %s' % (v.get('nlight'), v.get('lights')))
         print('scene.background, three.js floats: %s' % (v.get('background'),))
+
+
+async def metaworld_render_report():
+    """Run _mw_render_breakdown against a fresh capture.
+
+        await load_metaworld()
+        await metaworld_render_report()
+
+    The selftest prints the same breakdown on failure, so this is only needed to
+    re-check after a change without running the other four checks.
+    """
+    await metaworld_reset(19, _MW_SIGNATURE_DRAWER_X)
+    w, h = _METAWORLD_PROFILE['capture']
+    url = camera_image(_METAWORLD_PROFILE['camera'], w, h, 'jpeg')
+    sig = [float(v) for v in await window.robospaceLumaSignature(url)]
+    _mw_render_breakdown(sig)
     return sig
 
 
