@@ -131,7 +131,70 @@ export class BlockEditor {
                 "nextStatement": null,
                 "colour": 200,
                 "tooltip": "Print message to the console."
-            }
+            },
+            // ─── VLA (Meta-World) ───────────────────────────────────────
+            //
+            // These drive a real vision-language-action policy: the browser runs
+            // the MuJoCo physics, the board runs the model, and the only thing
+            // that decides which way the drawer goes is the sentence. Measured
+            // on the board over the same HTTP path these blocks use: 8/8 with a
+            // scene's own sentence, 0/8 with the other one, Fisher p = 0.000155.
+            //
+            // They are statement blocks that generate `await` calls, so they
+            // belong inside the async body the editor already wraps user code in.
+            {
+                "type": "robospace_vla_load",
+                "message0": "load Meta-World drawer scene",
+                "previousStatement": null,
+                "nextStatement": null,
+                "colour": 300,
+                "tooltip": "Download and load the Sawyer drawer scene (3.4 MB, cached after the first run). Run this once before the VLA blocks below."
+            },
+            {
+                "type": "robospace_vla_run",
+                "message0": "run VLA task %1",
+                "args0": [
+                    {
+                        "type": "field_dropdown",
+                        "name": "TASK",
+                        "options": [
+                            ["Open a drawer", "19"],
+                            ["Push and close a drawer", "18"]
+                        ]
+                    }
+                ],
+                "previousStatement": null,
+                "nextStatement": null,
+                "colour": 300,
+                "tooltip": "Drive the arm with the VLA policy. Both tasks are the SAME scene -- only the sentence differs, and that is what decides whether the drawer opens or closes."
+            },
+            {
+                "type": "robospace_vla_run_prompt",
+                "message0": "run VLA in the %1 scene, but say %2",
+                "args0": [
+                    {
+                        "type": "field_dropdown",
+                        "name": "TASK",
+                        "options": [
+                            ["Open a drawer", "19"],
+                            ["Push and close a drawer", "18"]
+                        ]
+                    },
+                    { "type": "field_input", "name": "PROMPT", "text": "Push and close a drawer" }
+                ],
+                "previousStatement": null,
+                "nextStatement": null,
+                "colour": 330,
+                "tooltip": "Feed the policy a sentence that does not match the scene, and watch what it does. This is the experiment: same pixels, different words."
+            },
+            {
+                "type": "robospace_vla_selftest",
+                "message0": "check the VLA pipeline",
+                "previousStatement": null,
+                "nextStatement": null,
+                "colour": 300,
+                "tooltip": "Check each link in order -- scene, camera, capture, renderer agreement with the board, board reachable, one inference -- and report which one is broken."
+            },
         ];
 
         Blockly.defineBlocksWithJsonArray(blockDefs);
@@ -146,6 +209,28 @@ export class BlockEditor {
             const y = block.getFieldValue('Y');
             const z = block.getFieldValue('Z');
             return `robot.arm.move_to([${x}, ${y}, ${z}])\n`;
+        };
+
+        // The VLA blocks generate awaits. The editor wraps user code in an async
+        // body, which is why these can await at statement level.
+        pyGen['robospace_vla_load'] = function () {
+            return `await load_metaworld()\n`;
+        };
+
+        pyGen['robospace_vla_run'] = function (block) {
+            return `await vla_metaworld(${block.getFieldValue('TASK')})\n`;
+        };
+
+        pyGen['robospace_vla_run_prompt'] = function (block) {
+            const task = block.getFieldValue('TASK');
+            // Quote defensively: this field is free text and a stray quote or
+            // backslash would otherwise produce Python that does not parse.
+            const prompt = JSON.stringify(String(block.getFieldValue('PROMPT') ?? ''));
+            return `await vla_metaworld(${task}, prompt=${prompt})\n`;
+        };
+
+        pyGen['robospace_vla_selftest'] = function () {
+            return `await metaworld_selftest()\n`;
         };
 
         pyGen['robospace_arm_home'] = function () {
@@ -203,6 +288,12 @@ export class BlockEditor {
 
         const toolboxXml = `
             <xml id="toolbox" style="display: none">
+              <category name="🧠 VLA" colour="#a855f7">
+                <block type="robospace_vla_load"></block>
+                <block type="robospace_vla_run"></block>
+                <block type="robospace_vla_run_prompt"></block>
+                <block type="robospace_vla_selftest"></block>
+              </category>
               <category name="🤖 Arm" colour="#3b82f6">
                 <block type="robospace_arm_move"></block>
                 <block type="robospace_arm_home"></block>

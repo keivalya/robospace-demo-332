@@ -1288,6 +1288,106 @@ async def metaworld_observation(prompt):
     }
 
 
+# The board's own corner4 render at the home pose, reduced to an 8x8 luma grid.
+# The browser renders with three.js and WebGL where the board uses MuJoCo's
+# OSMesa rasteriser, and that is the one link in this pipeline that cannot be
+# checked off-browser -- everything else is pinned by
+# test/metaworld-parity.test.mjs (physics to 4.17e-7) and bench/e2e_metaworld.py
+# (8/8 with the sentence, 0/8 against it, over HTTP). A signature rather than a
+# whole image because it travels in source and only has to catch gross mismatch:
+# a missing floor, stripped materials rendering black, a wrong camera.
+_MW_BOARD_SIGNATURE = [
+    116.7, 101.2, 124.5, 125.0, 125.0, 125.0, 125.0, 125.0,
+    118.2, 57.0, 86.9, 118.6, 123.0, 125.0, 125.0, 125.0,
+    79.5, 102.3, 131.8, 96.7, 103.8, 178.5, 154.1, 130.8,
+    94.5, 134.5, 103.8, 95.4, 76.6, 154.2, 181.3, 212.5,
+    86.6, 102.1, 92.9, 102.1, 106.4, 121.0, 107.3, 139.1,
+    64.3, 84.2, 96.1, 108.1, 106.4, 103.0, 102.0, 103.9,
+    49.6, 50.6, 96.2, 94.0, 109.7, 108.8, 105.0, 101.0,
+    57.9, 40.4, 61.3, 107.6, 98.1, 109.3, 107.5, 100.3,
+]
+
+
+async def metaworld_selftest(verbose=True):
+    """Check every link of the VLA pipeline and say which one is broken.
+
+        await load_metaworld()
+        await metaworld_selftest()
+
+    Six checks, in the order a failure would cascade: scene, camera, capture,
+    renderer agreement with the board, board reachable, and one real inference.
+    """
+    results = []
+
+    def note(name, ok, detail=''):
+        results.append((name, ok, detail))
+        if verbose:
+            print('  %s  %s%s' % ('PASS' if ok else 'FAIL', name,
+                                  ('   ' + detail) if detail else ''))
+
+    try:
+        names = [b['name'] for b in _index()['bodies']]
+    except Exception as exc:
+        note('scene loaded', False, str(exc)); return results
+    need = ['hand', 'rightclaw', 'leftclaw', 'mocap']
+    note('Meta-World scene loaded', all(n in names for n in need),
+         'missing ' + ', '.join(n for n in need if n not in names)
+         if not all(n in names for n in need) else 'hand, claws and mocap present')
+
+    cams = camera_names()
+    cam = _METAWORLD_PROFILE['camera']
+    note('corner4 camera present', cam in cams, 'cameras: ' + ', '.join(cams))
+    if cam not in cams:
+        return results
+
+    w, h = _METAWORLD_PROFILE['capture']
+    url = camera_image(cam, w, h, 'jpeg')
+    note('camera capture works', bool(url),
+         '%d KB jpeg at %dx%d' % (len(url) * 3 // 4 // 1024, w, h) if url else 'no image')
+    if not url:
+        return results
+
+    # Renderer agreement. Decoded in the browser because there is no image
+    # library here; an 8x8 luma grid is enough to catch a wrong camera or an
+    # unlit scene, which is what this is for.
+    try:
+        sig = await window.robospaceLumaSignature(url)
+        sig = [float(v) for v in sig]
+        diff = [abs(a - b) for a, b in zip(sig, _MW_BOARD_SIGNATURE)]
+        worst = max(diff)
+        mean = sum(diff) / len(diff)
+        note('renderer agrees with the board', mean < 25.0,
+             'mean |diff| %.1f, worst %.1f of 255 over an 8x8 luma grid%s'
+             % (mean, worst, '' if mean < 25.0 else '  <- the policy sees a different scene'))
+    except Exception as exc:
+        note('renderer agrees with the board', False, 'could not compare: %s' % exc)
+
+    st = window.robospaceVlaStatus()
+    ready = bool(st and st.ready)
+    note('board reachable', ready,
+         (st.detail if st and hasattr(st, 'detail') else '') if not ready else 'bridge ready')
+    if not ready:
+        return results
+
+    try:
+        obs = await metaworld_observation(_METAWORLD_TASKS[19])
+        res = await window.robospaceVlaAct(json.dumps(obs))
+        actions = res.actions.to_py() if hasattr(res.actions, 'to_py') else res.actions
+        a0 = [float(v) for v in actions[0]]
+        ok = len(a0) == 4 and all(v == v for v in a0)
+        note('one inference round trip', ok,
+             'chunk of %d, first action [%s]' % (len(actions), ', '.join('%.3f' % v for v in a0)))
+    except Exception as exc:
+        note('one inference round trip', False, str(exc))
+
+    if verbose:
+        bad = [n for n, ok, _ in results if not ok]
+        print('')
+        print('  all checks passed -- run vla_metaworld(19) or vla_metaworld(18)'
+              if not bad else '  broken: ' + ', '.join(bad))
+    return results
+
+
 async def vla_metaworld(task=19, steps=None, replan=None, prompt=None, verbose=True):
     """Drive the Meta-World Sawyer with the VLA policy on the board.
 
@@ -2527,8 +2627,8 @@ def help_api():
             ['load_task_scene', 'vla_ready', 'vla_profile', 'vla_control_loop_so101',
              'vla_act_so101', 'vla_observation_so101', 'vla_benchmark']),
         ('meta-world vla (needs await, RoboSpace app only)',
-            ['load_metaworld', 'vla_metaworld', 'metaworld_reset', 'metaworld_state',
-             'metaworld_observation']),
+            ['load_metaworld', 'vla_metaworld', 'metaworld_selftest',
+             'metaworld_reset', 'metaworld_state', 'metaworld_observation']),
         ('control', ['set_control', 'get_control', 'get_actuator_ranges']),
         ('state', ['get_qpos', 'get_qvel', 'set_qpos', 'set_qvel', 'get_joint',
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),

@@ -1420,6 +1420,32 @@ window.robospaceMetaworldAct = (action) => {
   demo.simClock?.advance(MW_FRAME_SKIP, demo.model.getOptions?.().timestep ?? 0);
 };
 
+// Reduce a captured frame to an 8x8 luma grid, so the Python side can compare
+// what this renderer produced against what the inference board produced without
+// shipping an image or an image library. Catches the failures that matter -- a
+// wrong camera, a scene rendering unlit, materials lost with their textures --
+// while being indifferent to anti-aliasing and shading detail.
+window.robospaceLumaSignature = async (dataUrl, grid = 8) => {
+  const img = new Image();
+  await new Promise((res, rej) => {
+    img.onload = res;
+    img.onerror = () => rej(new Error('could not decode the captured frame'));
+    img.src = dataUrl;
+  });
+  const c = document.createElement('canvas');
+  c.width = grid; c.height = grid;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  // drawImage does the box filter for us, which is exactly the downsample the
+  // board-side signature uses (reshape to 8x8 tiles and take the mean).
+  ctx.drawImage(img, 0, 0, grid, grid);
+  const { data } = ctx.getImageData(0, 0, grid, grid);
+  const out = [];
+  for (let i = 0; i < grid * grid; i++) {
+    out.push((data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2]) / 3);
+  }
+  return out;
+};
+
 window.robospaceLoadMetaworld = async (packId = 'metaworld_drawer') => {
   const { writeGeneratedScene } = await import(versioned('./utils/sceneWriter.js'));
   const { ROBOT_MANIFESTS } = await import(versioned('./utils/robotPacks.js'));
