@@ -8,6 +8,7 @@
 // gate when iterating on the system prompt.
 
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { DOMParser } from '../../robospace-nextjs/node_modules/@xmldom/xmldom/lib/index.js';
 
@@ -76,7 +77,7 @@ const demo = {
 // are fetched. ur5e needs its files copied in the way the browser's boot does.
 const needsFetch = robot && !robot.bundled;
 if (robot?.bundled) {
-  const src = path.join(import.meta.dirname, '..', 'examples', 'scenes', 'universal_robots_ur5e');
+  const src = path.join(fileURLToPath(new URL('.', import.meta.url)), '..', 'examples', 'scenes', 'universal_robots_ur5e');
   const dir = '/working/custom_scenes/check';
   for (const p of ['custom_scenes', 'custom_scenes/check', 'custom_scenes/check/assets']) {
     try { mujoco.FS.mkdir(`/working/${p}`); } catch (_) { /* exists */ }

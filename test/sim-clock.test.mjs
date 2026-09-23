@@ -11,6 +11,7 @@
 // cheap to catch.
 
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { SimClock } from '../examples/utils/simClock.js';
 
@@ -55,7 +56,7 @@ console.log('SimClock');
 
 console.log('\nevery stepping site advances the clock');
 {
-  const root = path.join(import.meta.dirname, '..', 'examples');
+  const root = path.join(fileURLToPath(new URL('.', import.meta.url)), '..', 'examples');
   const files = [
     'main.js',
     'pythonIntegration.js',
@@ -96,7 +97,7 @@ console.log('\nget_time() must not be wired to the render loop accumulator');
   // render() resyncs to the requestAnimationFrame timestamp — so it reported seconds
   // since page load, not simulation time.
   const src = fs.readFileSync(
-    path.join(import.meta.dirname, '..', 'examples', 'pythonIntegration.js'), 'utf8',
+    path.join(fileURLToPath(new URL('.', import.meta.url)), '..', 'examples', 'pythonIntegration.js'), 'utf8',
   );
   const getSimTime = /window\.getSimTime\s*=\s*[^;]*;/.exec(src);
   check(getSimTime !== null, 'window.getSimTime is defined');

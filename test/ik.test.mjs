@@ -8,6 +8,7 @@
 // request. That property is what makes the pass/fail line meaningful.
 
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import load_mujoco from '../dist/mujoco_wasm.js';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
@@ -27,7 +28,7 @@ const mujoco = await load_mujoco(mujocoLogHooks);
 mujoco.FS.mkdir('/working');
 mujoco.FS.mount(mujoco.MEMFS, { root: '.' }, '/working');
 
-const src = path.join(import.meta.dirname, '..', 'examples', 'scenes', 'universal_robots_ur5e');
+const src = path.join(fileURLToPath(new URL('.', import.meta.url)), '..', 'examples', 'scenes', 'universal_robots_ur5e');
 mujoco.FS.mkdir('/working/universal_robots_ur5e');
 mujoco.FS.mkdir('/working/universal_robots_ur5e/assets');
 for (const f of fs.readdirSync(src)) {
