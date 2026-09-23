@@ -1588,6 +1588,40 @@ window.robospaceLumaSignature = async (dataUrl, grid = 8) => {
 // corner4 render. three.js has no equivalent default, so it has to be stated.
 const MUJOCO_CLEAR_COLOR = new THREE.Color(127 / 255, 126 / 255, 122 / 255);
 
+// What is actually lighting and clearing the scene, for comparing a browser
+// capture against the board's MuJoCo render. Reported rather than inferred,
+// because the two terms with no three.js equivalent -- MuJoCo's camera-attached
+// headlight and its flat clear colour -- are exactly the ones a scene pack can
+// silently lose, and an aggregate luma difference cannot tell you which.
+window.robospaceVisualInfo = () => {
+  const m = demo.model;
+  if (!m) return null;
+  let headlight;
+  try {
+    const h = m.vis.headlight;
+    headlight = {
+      active: Number(h.active),
+      ambient: [h.ambient[0], h.ambient[1], h.ambient[2]],
+      diffuse: [h.diffuse[0], h.diffuse[1], h.diffuse[2]],
+      specular: [h.specular[0], h.specular[1], h.specular[2]],
+    };
+  } catch (err) {
+    // m.vis is an embind handle; a build that does not expose it throws here
+    // rather than returning undefined, and that is itself the finding.
+    headlight = { error: String((err && err.message) || err) };
+  }
+  const lights = [];
+  for (let i = 0; i < (m.nlight || 0); i++) {
+    lights.push({
+      diffuse: [m.light_diffuse[i * 3], m.light_diffuse[i * 3 + 1], m.light_diffuse[i * 3 + 2]],
+      directional: m.light_directional ? Number(m.light_directional[i]) : null,
+    });
+  }
+  const bg = demo.scene && demo.scene.background;
+  return { headlight, nlight: m.nlight || 0, lights,
+           background: bg ? [bg.r, bg.g, bg.b] : null };
+};
+
 window.robospaceLoadMetaworld = async (packId = 'metaworld_drawer') => {
   const { writeGeneratedScene } = await import(versioned('./utils/sceneWriter.js'));
   const { ROBOT_MANIFESTS } = await import(versioned('./utils/robotPacks.js'));

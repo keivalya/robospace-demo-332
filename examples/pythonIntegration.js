@@ -1453,6 +1453,63 @@ async def metaworld_selftest(verbose=True):
     return results
 
 
+async def metaworld_render_report():
+    """Say WHICH part of the frame disagrees with the board, not just how much.
+
+        await load_metaworld()
+        await metaworld_render_report()
+
+    metaworld_selftest() reports one aggregate, and three very different faults
+    produce the same one: the image being oriented differently, the whole frame
+    being uniformly brighter or darker, and a genuine localised difference in
+    geometry or materials. This separates them.
+    """
+    await metaworld_reset(19, _MW_SIGNATURE_DRAWER_X)
+    w, h = _METAWORLD_PROFILE['capture']
+    url = camera_image(_METAWORLD_PROFILE['camera'], w, h, 'jpeg')
+    sig = [float(v) for v in await window.robospaceLumaSignature(url)]
+    b = list(_MW_BOARD_SIGNATURE)
+    rows = [sig[r * 8:(r + 1) * 8] for r in range(8)]
+
+    def mad(v):
+        return sum(abs(x - y) for x, y in zip(v, b)) / 64.0
+
+    print('browser 8x8 luma:')
+    for row in rows:
+        print('   ' + ' '.join('%6.1f' % x for x in row))
+    print('board 8x8 luma:')
+    for r in range(8):
+        print('   ' + ' '.join('%6.1f' % x for x in b[r * 8:(r + 1) * 8]))
+    print('means: browser %.1f   board %.1f   offset %+.1f'
+          % (sum(sig) / 64, sum(b) / 64, sum(sig) / 64 - sum(b) / 64))
+
+    # Orientation. The board applies [::-1, ::-1] to MuJoCo's frame and this
+    # renderer is supposed to come out already upright. If that assumption is
+    # wrong, one of the three transforms below scores far under 'as-is'.
+    for name, v in (('as-is', sig),
+                    ('rot180', [x for row in reversed(rows) for x in reversed(row)]),
+                    ('fliplr', [x for row in rows for x in reversed(row)]),
+                    ('flipud', [x for row in reversed(rows) for x in row])):
+        print('mean|diff| %-7s %5.1f' % (name, mad(v)))
+
+    # A near-constant offset is lighting or exposure; a large residual after
+    # removing it is geometry, materials or camera pose.
+    off = sum(sig) / 64 - sum(b) / 64
+    print('mean|diff| with that offset removed: %5.1f'
+          % (sum(abs((x - off) - y) for x, y in zip(sig, b)) / 64))
+    print('per-row mean|diff| (top to bottom): ' + ' '.join(
+        '%.0f' % (sum(abs(sig[r * 8 + c] - b[r * 8 + c]) for c in range(8)) / 8.0)
+        for r in range(8)))
+
+    vis = window.robospaceVisualInfo()
+    if vis is not None:
+        v = vis.to_py() if hasattr(vis, 'to_py') else vis
+        print('headlight: %s' % (v.get('headlight'),))
+        print('nlight %s   lights %s' % (v.get('nlight'), v.get('lights')))
+        print('scene.background, three.js floats: %s' % (v.get('background'),))
+    return sig
+
+
 async def metaworld_rehome(iters=20):
     """Walk the arm home without disturbing the task.
 
