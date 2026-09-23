@@ -35,7 +35,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import load_mujoco from '../dist/mujoco_wasm.js';
+import { loadMujocoModule as load_mujoco } from '../examples/utils/mujocoModule.js';
 import { mujocoLogHooks, clearMjLog, drainMjLog } from '../examples/utils/mujocoLog.js';
 import { compileModel } from '../examples/mujocoUtils.js';
 

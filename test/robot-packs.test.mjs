@@ -10,7 +10,7 @@
 // survive the write byte-exact, and the oversized Stretch mesh routes around
 // jsDelivr's 20 MB cap.
 
-import load_mujoco from '../dist/mujoco_wasm.js';
+import { loadMujocoModule as load_mujoco } from '../examples/utils/mujocoModule.js';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel, readModelNames } from '../examples/mujocoUtils.js';
 import { ensureRobotPack, ROBOT_MANIFESTS } from '../examples/utils/robotPacks.js';

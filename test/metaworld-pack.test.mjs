@@ -18,7 +18,7 @@
 //     compile error rather than a missing texture.
 //   * The compiled model matches the board's dimensions exactly. If upstream
 //     moves and a mesh silently drops out, ngeom changes and this catches it.
-import load_mujoco from '../dist/mujoco_wasm.js';
+import { loadMujocoModule as load_mujoco } from '../examples/utils/mujocoModule.js';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel, readNames } from '../examples/mujocoUtils.js';
 import { ensureRobotPack, ROBOT_MANIFESTS } from '../examples/utils/robotPacks.js';

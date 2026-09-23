@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { DOMParser } from '../../robospace-nextjs/node_modules/@xmldom/xmldom/lib/index.js';
 
-import load_mujoco from '../dist/mujoco_wasm.js';
+import { loadMujocoModule as load_mujoco } from '../examples/utils/mujocoModule.js';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel } from '../examples/mujocoUtils.js';
 import { writeGeneratedScene } from '../examples/utils/sceneWriter.js';

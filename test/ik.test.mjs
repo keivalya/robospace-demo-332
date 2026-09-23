@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import load_mujoco from '../dist/mujoco_wasm.js';
+import { loadMujocoModule as load_mujoco } from '../examples/utils/mujocoModule.js';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel } from '../examples/mujocoUtils.js';
 import { solveIk } from '../examples/utils/ik.js';

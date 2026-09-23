@@ -3,7 +3,7 @@
 // Tests for camera coordinate transformations, sensor slicing,
 // camera and sensor metadata decoding, and readModelStats.
 
-import load_mujoco from '../dist/mujoco_wasm.js';
+import { loadMujocoModule as load_mujoco } from '../examples/utils/mujocoModule.js';
 import { mujocoLogHooks } from '../examples/utils/mujocoLog.js';
 import { compileModel, readNames } from '../examples/mujocoUtils.js';
 import { readModelStats } from '../examples/utils/sceneWriter.js';

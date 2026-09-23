@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { DragStateManager } from './utils/DragStateManager.js';
 import { downloadExampleScenesFolder, loadSceneFromURL, compileModel, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
-import load_mujoco from '../dist/mujoco_wasm.js';
+import { loadMujocoModule as load_mujoco } from './utils/mujocoModule.js';
 import { FileUploadManager } from './utils/FileUploadManager.js';
 import { LivePlotter } from './utils/LivePlotter.js';
 import { CameraViewer } from './utils/CameraViewer.js';
