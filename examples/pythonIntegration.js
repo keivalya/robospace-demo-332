@@ -1430,8 +1430,20 @@ async def metaworld_selftest(verbose=True):
     return results
 
 
+async def metaworld_rehome(iters=20):
+    """Walk the arm home without disturbing the task.
+
+    Not a reset: every object keeps its position, so a policy that has wedged
+    its gripper or driven the hand somewhere it never saw in training gets a
+    fresh approach at the CURRENT state rather than a new episode.
+    """
+    res = await window.robospaceMetaworldRehome(iters)
+    return [float(v) for v in res.after]
+
+
 async def vla_metaworld(task=19, steps=None, replan=None, prompt=None,
-                        drawer_x=None, verbose=True):
+                        drawer_x=None, recover=True, stall_steps=40,
+                        max_recoveries=3, verbose=True):
     """Drive the Meta-World Sawyer with the VLA policy on the board.
 
         await load_metaworld()
@@ -1439,19 +1451,28 @@ async def vla_metaworld(task=19, steps=None, replan=None, prompt=None,
         await vla_metaworld(18)      # "Push and close a drawer" -- same scene
 
     The two tasks share one MJCF, so the scene is identical and only the
-    sentence differs. Measured on the board: 6/6 with the matching sentence and
-    0/6 with the other, Fisher p = 0.00216. Pass 'prompt' to try your own, which
-    is the interesting thing to do and is flagged below as off-distribution.
+    sentence differs. Measured on the board over this same HTTP path: 8/8 with
+    the matching sentence and 0/8 with the other, Fisher p = 0.000155. Pass
+    'prompt' to try your own, which is the interesting thing to do and is
+    flagged below as off-distribution.
 
-    Each inference returns a 50-action chunk and 'replan' of them are executed
-    before asking again. The checkpoint's config says 1; 5 is the measured
-    compromise and what the board's numbers were taken at.
+    RECOVERY. A VLA has no notion of being stuck: it maps the current image to
+    an action, and if the arm has wedged itself somewhere outside the training
+    distribution it will keep emitting confident actions that do nothing until
+    the horizon runs out. So the loop watches progress -- hand movement and the
+    task joint together, because a policy pressing a drawer shut moves the hand
+    very little while making real progress -- and when nothing has changed for
+    'stall_steps' it walks the arm home and lets the policy try again from a
+    pose it does recognise. Objects are left exactly where they are, so this
+    resumes the episode rather than restarting it. Set recover=False to see the
+    unassisted behaviour.
     """
     if task not in _METAWORLD_TASKS:
         raise ValueError('unknown task %r. Have: %s'
                          % (task, ', '.join(str(k) for k in sorted(_METAWORLD_TASKS))))
-    # The scene is reset for 'task'; only the sentence changes when 'prompt' is
-    # given. That is the whole point -- same pixels, different words.
+    # The scene is reset for 'task'; only the sentence follows 'prompt'. That is
+    # what makes a swapped prompt a controlled comparison rather than a
+    # different setup.
     text = _METAWORLD_TASKS[task] if prompt is None else prompt
     off_distribution = prompt is not None and prompt not in _METAWORLD_TASKS.values()
     steps = _METAWORLD_PROFILE['max_steps'] if steps is None else int(steps)
@@ -1462,8 +1483,24 @@ async def vla_metaworld(task=19, steps=None, replan=None, prompt=None,
         print('task %d: "%s"%s' % (task, text,
               '   <- your own sentence, not a training string' if off_distribution else ''))
 
-    queue, chunks, done = [], 0, 0
+    # A ring of recent samples, compared against the one from stall_steps ago.
+    # That catches WANDERING, which is the failure that actually happens: the
+    # policy keeps emitting large actions and the hand keeps moving, it just
+    # orbits a point instead of converging. A since-last-movement counter never
+    # fires on that -- measured on the board, it recovered zero times in five
+    # episodes while every one of them failed.
+    from collections import deque
+
+    async def _sample():
+        p = await window.robospaceMetaworldProgress()
+        return ([float(v) for v in p.hand], float(p.task))
+
+    history = deque(maxlen=stall_steps + 1)
+    history.append(await _sample())
+    recoveries, queue, chunks, done = 0, [], 0, 0
+    succeeded, success_step = False, None
     t0 = window.performance.now()
+
     for i in range(steps):
         if not queue:
             obs = await metaworld_observation(text)
@@ -1477,16 +1514,59 @@ async def vla_metaworld(task=19, steps=None, replan=None, prompt=None,
         # Positional floats, not a list: see robospaceMetaworldAct in main.js.
         window.robospaceMetaworldAct(float(a[0]), float(a[1]), float(a[2]), float(a[3]))
         done = i + 1
+
+        # Success is momentary -- about one frame in 88 in the scripted demos --
+        # so it has to be tested every step, not at the end.
+        verdict = await window.robospaceMetaworldSuccess(task)
+        if verdict.ok and not succeeded:
+            succeeded, success_step = True, done
+            if verbose:
+                print('  SUCCESS at step %d  (task joint %+.4f)' % (done, float(verdict.slide)))
+            break
+
+        now = await _sample()
+        history.append(now)
+        if recover and len(history) > stall_steps:
+            then = history[0]
+            net = max(max(abs(now[0][k] - then[0][k]) for k in range(3)),
+                      abs(now[1] - then[1]))
+            if net < 0.02:
+                if recoveries >= max_recoveries:
+                    if verbose:
+                        print('  stalled again after %d recoveries; stopping at step %d'
+                              % (recoveries, done))
+                    break
+                recoveries += 1
+                if verbose:
+                    print('  moved %.3f m in %d steps -- walking the arm home '
+                          '(recovery %d of %d), task joint %+.4f'
+                          % (net, stall_steps, recoveries, max_recoveries, now[1]))
+                await metaworld_rehome()
+                queue = []                  # the old chunk was computed elsewhere
+                history.clear()
+                history.append(await _sample())
+
     wall = (window.performance.now() - t0) / 1000.0
     st = await metaworld_state()
+    verdict = await window.robospaceMetaworldSuccess(task)
     if verbose:
-        print('  %d steps, %d inferences, %.1fs  (%.0f ms/chunk)'
-              % (done, chunks, wall, 1000.0 * wall / max(chunks, 1)))
-        print('  hand now [%s]' % ', '.join('%.4f' % v for v in st))
-        print('  NOTE success is scored by the environment on the board, not here;')
-        print('       watch the drawer to see what happened.')
-    return {'task': task, 'prompt': text, 'steps': done, 'chunks': chunks,
-            'seconds': wall, 'state': st, 'off_distribution': off_distribution}
+        print('')
+        print('  %s   task %d: "%s"'
+              % ('SUCCESS' if succeeded else 'FAILED ', task, text))
+        if succeeded:
+            print('    reached at step %d of %d' % (success_step, steps))
+        else:
+            print('    ran %d steps without reaching the goal (task joint %+.4f)'
+                  % (done, float(verdict.slide) if verdict.slide is not None else float('nan')))
+        print('    %d inferences, %d recoveries, %.1fs, %.0f ms/chunk'
+              % (chunks, recoveries, wall, 1000.0 * wall / max(chunks, 1)))
+        if off_distribution:
+            print('    the sentence was your own, not one this policy was trained on')
+    return {'task': task, 'prompt': text, 'success': succeeded,
+            'success_step': success_step, 'steps': done, 'chunks': chunks,
+            'recoveries': recoveries, 'seconds': wall, 'state': st,
+            'task_joint': float(verdict.slide) if verdict.slide is not None else None,
+            'off_distribution': off_distribution}
 
 
 def vla_observation(cameras=('front_camera', 'gripper_camera'), size=256):
@@ -2675,7 +2755,8 @@ def help_api():
              'vla_act_so101', 'vla_observation_so101', 'vla_benchmark']),
         ('meta-world vla (needs await, RoboSpace app only)',
             ['load_metaworld', 'vla_metaworld', 'metaworld_selftest',
-             'metaworld_reset', 'metaworld_state', 'metaworld_observation']),
+             'metaworld_reset', 'metaworld_rehome', 'metaworld_state',
+             'metaworld_observation']),
         ('control', ['set_control', 'get_control', 'get_actuator_ranges']),
         ('state', ['get_qpos', 'get_qvel', 'set_qpos', 'set_qvel', 'get_joint',
                    'set_joint', 'reset', 'reset_keyframe', 'step', 'forward', 'kinematics']),

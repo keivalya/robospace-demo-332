@@ -1441,6 +1441,77 @@ window.robospaceMetaworldReset = async (taskId = 19, drawerX = null) => {
            state: await window.robospaceMetaworldState() };
 };
 
+// Did the task succeed? Reported every step, because Meta-World's success is a
+// MOMENTARY condition -- in the scripted demos it holds for roughly one frame in
+// 88, at the very end of the motion -- so a check only at the end misses it.
+//
+// The board scores this from the environment's own predicate, which needs the
+// reward code. Here it is read off the drawer joint instead, with thresholds
+// calibrated against that predicate over 12 scripted episodes:
+//
+//   task 19 open:   env says success at goal_slidey <= -0.1639, still fails at -0.1598
+//   task 18 close:  env says success at goal_slidey >= -0.0310, still fails at -0.0321
+//
+// So these thresholds sit in the gap and reproduce the env's verdict on every
+// one of those episodes. They are a calibration, not the env's formula, and the
+// authority remains bench/e2e_metaworld.py on the board.
+const MW_SUCCESS = {
+  19: (slide) => slide <= -0.162,
+  18: (slide) => slide >= -0.0315,
+};
+
+window.robospaceMetaworldSuccess = async (taskId) => {
+  const m = demo.model;
+  if (!mwNamesCache.readNames) mwNamesCache = await import(versioned('./mujocoUtils.js'));
+  const joints = mwNamesCache.readNames(m, m.name_jntadr, m.njnt, 'joint');
+  const ji = joints.indexOf('goal_slidey');
+  if (ji < 0) return { ok: false, slide: null, reason: 'no goal_slidey joint in this scene' };
+  const slide = demo.simulation.qpos[m.jnt_qposadr[ji]];
+  const test = MW_SUCCESS[taskId];
+  return { ok: test ? test(slide) : false, slide,
+           reason: test ? '' : `no success criterion for task ${taskId}` };
+};
+
+// Recovery: walk the arm back to the home pose without touching anything else.
+//
+// Distinct from robospaceMetaworldReset, and the difference is the point. A
+// reset zeroes qpos, which teleports the drawer shut and throws away whatever
+// progress the episode made. This only re-pins the mocap body and lets the weld
+// drag the arm home; every object keeps its position. So a policy that has
+// wedged its gripper, driven the hand into the table, or backed itself into a
+// pose it never saw in training gets a fresh approach at the *current* state of
+// the task rather than a new episode.
+//
+// Fewer settle iterations than a reset because the arm is already nearby --
+// this is a correction, not a cold start, and 50 iterations of 5 steps would be
+// a visible pause.
+window.robospaceMetaworldRehome = async (iters = 20) => {
+  const sim = demo.simulation, m = demo.model;
+  const before = await window.robospaceMetaworldState();
+  for (let i = 0; i < iters; i++) {
+    for (let k = 0; k < 3; k++) sim.mocap_pos[k] = MW_HAND_INIT[k];
+    for (let k = 0; k < 4; k++) sim.mocap_quat[k] = MW_MOCAP_QUAT[k];
+    sim.ctrl[0] = -1; sim.ctrl[1] = 1;          // open the gripper on the way back
+    for (let k = 0; k < MW_FRAME_SKIP; k++) sim.step();
+  }
+  demo.simClock?.advance(iters * MW_FRAME_SKIP, m.getOptions?.().timestep ?? 0);
+  const after = await window.robospaceMetaworldState();
+  return { before, after, iters };
+};
+
+// A scalar the loop can watch to tell "working on it" from "wedged". Hand
+// position alone is not enough: a policy pressing the drawer shut moves the hand
+// very little while making real progress, so the task joint has to count too.
+window.robospaceMetaworldProgress = async () => {
+  const m = demo.model;
+  if (!mwNamesCache.readNames) mwNamesCache = await import(versioned('./mujocoUtils.js'));
+  const joints = mwNamesCache.readNames(m, m.name_jntadr, m.njnt, 'joint');
+  const ji = joints.indexOf('goal_slidey');
+  const st = await window.robospaceMetaworldState();
+  return { hand: st.slice(0, 3), grip: st[3],
+           task: ji >= 0 ? demo.simulation.qpos[m.jnt_qposadr[ji]] : 0 };
+};
+
 // [hand.x, hand.y, hand.z, gripper_distance_apart] -- the 4-D vector the policy
 // consumes. These are BODIES: there is no site named "hand", and the gap is read
 // from the claw bodies, not the fingertip sites.

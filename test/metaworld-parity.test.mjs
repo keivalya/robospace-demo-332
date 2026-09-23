@@ -142,7 +142,10 @@ const hand = bi('hand'), rc = bi('rightclaw'), lc = bi('leftclaw');
 const at = (id) => [sim.xpos[id * 3], sim.xpos[id * 3 + 1], sim.xpos[id * 3 + 2]];
 const gap = () => { const a = at(rc), b = at(lc);
   return Math.min(1, Math.max(0, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) / 0.1)); };
-const near = (got, want) => Math.max(...want.map((w, i) => Math.abs(got[i] - w))) < TOL;
+// Tolerance is a parameter: the reset settles for 50 iterations and lands within
+// 1e-3 of the board, while recovery settles for 20 and lands within a few mm.
+const near = (got, want, tol = TOL) =>
+  Math.max(...want.map((w, i) => Math.abs(got[i] - w))) < tol;
 
 for (let i = 0; i < model.nq; i++) sim.qpos[i] = 0;
 for (let i = 0; i < model.nv; i++) sim.qvel[i] = 0;
@@ -235,6 +238,80 @@ for (const [taskId, wantGoalY, wantSlide, label] of
   check(`task ${taskId}: hand still homed after the task reset`,
         near(at(hand), BOARD_RESET[49]), `[${at(hand).map((v) => v.toFixed(4))}]`);
 }
+
+// --- 5. recovery must restore the arm WITHOUT resetting the task -------------
+//
+// This is the invariant that separates robospaceMetaworldRehome from
+// robospaceMetaworldReset. A VLA has no notion of being stuck: it maps the
+// current image to an action, so once the arm wedges itself outside the
+// training distribution it emits confident actions that do nothing until the
+// horizon runs out. Walking the arm home gives it a pose it recognises -- but
+// only helps if the episode continues, so every object must keep its position.
+// If this check ever fails, recovery has quietly become a restart and any
+// success it produces is measuring the wrong thing.
+resetForTask(19, DRAWER_X);
+// Drive the drawer part-way open and the hand off into a corner, i.e. the shape
+// of a policy that has half-done the task and then lost the plot.
+sim.qpos[model.jnt_qposadr[slideJ]] = -0.08;
+sim.forward();
+for (let i = 0; i < 40; i++) {
+  sim.mocap_pos[0] = clamp(sim.mocap_pos[0] - 0.01, LOW[0], HIGH[0]);
+  sim.mocap_pos[2] = clamp(sim.mocap_pos[2] - 0.01, LOW[2], HIGH[2]);
+  sim.ctrl[0] = 1; sim.ctrl[1] = -1;                 // gripper clamped shut
+  for (let k = 0; k < FRAME_SKIP; k++) sim.step();
+}
+const strandedHand = at(hand);
+const taskBefore = sim.qpos[model.jnt_qposadr[slideJ]];
+// Max over all three axes: the stranding drives x and z, and checking y alone
+// reports "the arm never moved" about an arm that moved 36 cm sideways.
+const strandedBy = Math.max(...BOARD_RESET[49].map((v, i) => Math.abs(strandedHand[i] - v)));
+check('setup: the arm is away from home and the drawer part-open',
+      strandedBy > 0.05 && Math.abs(taskBefore) > 0.02,
+      `hand [${strandedHand.map((v) => v.toFixed(3))}] is ${strandedBy.toFixed(3)} from home, ` +
+      `task joint ${taskBefore.toFixed(4)}`);
+
+// robospaceMetaworldRehome, verbatim: mocap home, gripper open, no qpos writes.
+for (let i = 0; i < 20; i++) {
+  for (let k = 0; k < 3; k++) sim.mocap_pos[k] = HAND_INIT[k];
+  for (let k = 0; k < 4; k++) sim.mocap_quat[k] = MOCAP_QUAT[k];
+  sim.ctrl[0] = -1; sim.ctrl[1] = 1;
+  for (let k = 0; k < FRAME_SKIP; k++) sim.step();
+}
+const taskAfter = sim.qpos[model.jnt_qposadr[slideJ]];
+check('recovery brings the hand back to home',
+      near(at(hand), BOARD_RESET[49], 0.02), `[${at(hand).map((v) => v.toFixed(4))}]`);
+check('recovery leaves the task untouched', Math.abs(taskAfter - taskBefore) < 5e-3,
+      `task joint ${taskBefore.toFixed(4)} -> ${taskAfter.toFixed(4)}`);
+check('recovery reopens the gripper', gap() > 0.9, `gap ${gap().toFixed(3)}`);
+
+// --- 6. the browser's success criterion, calibrated against the env ----------
+//
+// The board scores success with the environment's own predicate, which needs the
+// reward code. The browser reads the drawer joint instead, with thresholds
+// calibrated against that predicate over 12 scripted episodes:
+//
+//   task 19 open:   env succeeds at goal_slidey <= -0.1639, still fails at -0.1598
+//   task 18 close:  env succeeds at goal_slidey >= -0.0310, still fails at -0.0321
+//
+// These assertions pin the thresholds inside those gaps. If the joint's range or
+// the tasks' targets ever move, this fails rather than the browser quietly
+// reporting a success the board would not.
+const MW_SUCCESS = { 19: (v) => v <= -0.162, 18: (v) => v >= -0.0315 };
+for (const [taskId, succeedAt, failAt] of [[19, -0.1639, -0.1598], [18, -0.0310, -0.0321]]) {
+  const t = MW_SUCCESS[taskId];
+  check(`task ${taskId}: the env's success value is called a success`, t(succeedAt),
+        `goal_slidey ${succeedAt}`);
+  check(`task ${taskId}: the env's last failing value is called a failure`, !t(failAt),
+        `goal_slidey ${failAt}`);
+}
+// And the criterion must be reachable in this build: the joint has to travel far
+// enough for task 19's threshold to be attainable at all.
+resetForTask(19, DRAWER_X);
+sim.qpos[model.jnt_qposadr[slideJ]] = -0.18;        // past the soft limit, as the expert does
+sim.forward();
+check('task 19: the success threshold is reachable in this build',
+      MW_SUCCESS[19](sim.qpos[model.jnt_qposadr[slideJ]]),
+      `goal_slidey clamps to ${sim.qpos[model.jnt_qposadr[slideJ]].toFixed(4)}`);
 
 console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
