@@ -27,7 +27,8 @@
     "test:sensors": "node --import ./test/register.mjs test/sensors-cameras.test.mjs",
     "test:challenges": "node --import ./test/register.mjs test/challenge-evaluator.test.mjs",
     "test:dataset": "node test/data-logger.test.mjs && node test/lerobot-exporter.test.mjs && node test/macro-teacher.test.mjs && node test/camera-capture.test.mjs",
-    "test:analytics": "node test/analytics.test.mjs"
+    "test:analytics": "node test/analytics.test.mjs",
+    "test:language": "python3 tools/check-language-match.py"
   },
   "repository": {
     "type": "git",

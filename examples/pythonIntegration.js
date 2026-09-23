@@ -1266,9 +1266,14 @@ _METAWORLD_PROFILE = {
     # jadechoghari/smolvla_metaworld. One camera, and it is corner4, not the
     # corner2 that Meta-World documents as its demo view: rendering all seven
     # cameras against a real training frame gives corner4 under a vertical +
-    # horizontal flip at 1.91/255 against 34.09 for the runner-up. The flip is
-    # applied by the renderer here because captureImage returns the view already
-    # upright, which is what the board's [::-1, ::-1] produces.
+    # horizontal flip at 1.91/255 against 34.09 for the runner-up.
+    #
+    # That flip is NOT free here, which this comment used to claim. corner4's
+    # camera is rolled, so MuJoCo renders it upside down and the board corrects
+    # it in render_frame; captureImage's vertical flip only undoes WebGL's
+    # bottom-to-top framebuffer order, not a camera roll. Scored against the
+    # board's 8x8 luma grid, the raw capture is 56.0 off and rot180 is 25.9,
+    # every other orientation 30.5 or worse. _mw_capture() applies it.
     'camera': 'corner4',
     'capture': (480, 480),
     'image_key': 'image',           # policy feature is observation.image
@@ -1550,14 +1555,112 @@ async def metaworld_rehome(iters=20):
     return [float(v) for v in res.after]
 
 
+# Words that carry no task meaning, so 'can you please open the drawer' scores
+# the same as 'open drawer'.
+_MW_STOPWORDS = frozenset((
+    'a', 'an', 'the', 'and', 'to', 'of', 'with', 'by', 'it', 'its', 'is', 'then',
+    'please', 'can', 'you', 'now', 'robot', 'arm', 'up', 'down', 'again',
+))
+
+# Only folds forms that cannot change which task is meant. Deliberately does NOT
+# map 'pull' to 'open': task 26 is 'Pull a handle up', so that synonym would be
+# wrong the moment a second pack is loaded.
+_MW_SYNONYMS = {
+    'shut': 'close', 'closed': 'close', 'closing': 'close', 'shuts': 'close',
+    'opened': 'open', 'opening': 'open', 'opens': 'open', 'out': 'open',
+    'pushed': 'push', 'pushing': 'push', 'pushes': 'push',
+    'turn': 'rotate', 'turning': 'rotate', 'turns': 'rotate', 'rotating': 'rotate',
+    'pressing': 'press', 'presses': 'press', 'pulling': 'pull', 'pulls': 'pull',
+    'drawers': 'drawer', 'doors': 'door', 'windows': 'window', 'faucets': 'faucet',
+}
+
+
+def _mw_words(text):
+    """Content words: lowercased, punctuation dropped, light synonyms folded."""
+    flat = ''.join(c if c.isalnum() else ' ' for c in str(text).lower())
+    return frozenset(_MW_SYNONYMS.get(w, w) for w in flat.split()
+                     if w not in _MW_STOPWORDS)
+
+
+def metaworld_match(text, verbose=True):
+    """Which task a sentence resolves to, and why -- without running anything.
+
+        metaworld_match('shut the drawer')      -> 18
+
+    Returns the task id, or None when the sentence does not pick one. Scored by
+    Jaccard overlap on content words, which is enough here and, unlike an
+    embedding, can be read off the printout and argued with.
+
+    Two ways to decline rather than guess:
+
+      * no overlap at all -- the sentence is about something else entirely.
+      * no discriminator -- the sentence matches only words the candidates
+        SHARE. 'the drawer' scores 0.50 against 'Open a drawer' purely because
+        both contain 'drawer'; it expresses no preference between opening and
+        closing it, and picking the higher score would invent an intention.
+    """
+    ids = sorted(_METAWORLD_TASKS)
+    q = _mw_words(text)
+    ranked = sorted(
+        ((len(q & _mw_words(_METAWORLD_TASKS[i]))
+          / max(1, len(q | _mw_words(_METAWORLD_TASKS[i]))), i) for i in ids),
+        key=lambda pair: (-pair[0], pair[1]))
+    best_score, best = ranked[0]
+
+    shared = frozenset()
+    for i in ids:
+        if i != best:
+            shared = shared | _mw_words(_METAWORLD_TASKS[i])
+    unique_to_best = _mw_words(_METAWORLD_TASKS[best]) - shared
+
+    reason = 'ok'
+    if best_score == 0.0:
+        best, reason = None, 'nothing in that sentence matches any loaded task'
+    elif unique_to_best and not (q & unique_to_best):
+        best, reason = None, ('that sentence only uses words the loaded tasks '
+                              'share, so it does not choose between them')
+
+    if verbose:
+        for score, i in ranked:
+            print('  %5.2f  %2d  %s' % (score, i, _METAWORLD_TASKS[i]))
+        print('  -> %s' % (reason if best is None else
+                           '%d  %s' % (best, _METAWORLD_TASKS[best])))
+    return best
+
+
+def _mw_resolve(text, verbose=True):
+    """metaworld_match, but raising with the options rather than returning None."""
+    tid = metaworld_match(text, verbose=False)
+    if tid is None:
+        metaworld_match(text, verbose=True)
+        raise ValueError(
+            'could not tell which task %r means. Loaded tasks:\n%s'
+            % (text, '\n'.join('    %2d  %s' % (i, _METAWORLD_TASKS[i])
+                                for i in sorted(_METAWORLD_TASKS))))
+    return tid
+
+
 async def vla_metaworld(task=19, steps=None, replan=None, prompt=None,
                         drawer_x=None, recover=True, stall_steps=40,
-                        max_recoveries=3, verbose=True):
+                        max_recoveries=3, verbose=True, verbatim=False):
     """Drive the Meta-World Sawyer with the VLA policy on the board.
 
         await load_metaworld()
-        await vla_metaworld(19)      # "Open a drawer"
-        await vla_metaworld(18)      # "Push and close a drawer" -- same scene
+        await vla_metaworld('open the drawer')     # plain language
+        await vla_metaworld('shut the drawer')     # same scene, opposite result
+        await vla_metaworld(19)                    # or the task id directly
+
+    LANGUAGE INPUT resolves to one of the loaded tasks through
+    metaworld_match(), and then, by default, sends that task's TRAINING
+    sentence rather than your words. That substitution is the whole point, not
+    a shortcut: these checkpoints are measured as verbatim-sensitive, with
+    paraphrase costing 22-52 points (LIBERO-Para) and SmolVLA among the most
+    brittle of the models tested. So 'shut the drawer' selects task 18 and the
+    policy is told 'Push and close a drawer', and the line printed below says
+    so rather than leaving you to wonder which sentence was sent.
+
+    Pass verbatim=True to send your own words instead. That is the interesting
+    experiment and it is flagged off-distribution when you run it.
 
     The two tasks share one MJCF, so the scene is identical and only the
     sentence differs. Measured on the board over this same HTTP path: 8/8 with
@@ -1576,6 +1679,9 @@ async def vla_metaworld(task=19, steps=None, replan=None, prompt=None,
     resumes the episode rather than restarting it. Set recover=False to see the
     unassisted behaviour.
     """
+    spoken = task if isinstance(task, str) else None
+    if spoken is not None:
+        task = _mw_resolve(spoken, verbose=verbose)
     if task not in _METAWORLD_TASKS:
         raise ValueError('unknown task %r. Have: %s'
                          % (task, ', '.join(str(k) for k in sorted(_METAWORLD_TASKS))))
@@ -1583,7 +1689,16 @@ async def vla_metaworld(task=19, steps=None, replan=None, prompt=None,
     # what makes a swapped prompt a controlled comparison rather than a
     # different setup.
     text = _METAWORLD_TASKS[task] if prompt is None else prompt
-    off_distribution = prompt is not None and prompt not in _METAWORLD_TASKS.values()
+    if prompt is None and spoken is not None and verbatim:
+        text = spoken
+    # Derived from the sentence actually being sent, so verbatim=True and an
+    # explicit prompt= are both reported honestly.
+    off_distribution = text not in _METAWORLD_TASKS.values()
+    if verbose and spoken is not None:
+        if text == spoken:
+            print('heard %r -> task %d, sending your words verbatim' % (spoken, task))
+        else:
+            print('heard %r -> task %d, sending %r' % (spoken, task, text))
     steps = _METAWORLD_PROFILE['max_steps'] if steps is None else int(steps)
     replan = _METAWORLD_PROFILE['replan'] if replan is None else int(replan)
 
