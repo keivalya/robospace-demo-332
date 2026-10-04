@@ -9,7 +9,8 @@ import { createCodeEditor } from './utils/CodeEditor.js';
 import { BlockEditor } from './utils/BlockEditor.js';
 
 export async function initializePythonEnvironment(demo) {
-    if (!window.pyodide) return;
+    if (!window.pyodide) throw new Error("Pyodide has not loaded");
+    demo.pythonApiReady = false;
 
     try {
         // Load required packages first
@@ -1634,8 +1635,8 @@ def _mw_resolve(text, verbose=True):
     if tid is None:
         metaworld_match(text, verbose=True)
         raise ValueError(
-            'could not tell which task %r means. Loaded tasks:\n%s'
-            % (text, '\n'.join('    %2d  %s' % (i, _METAWORLD_TASKS[i])
+            'could not tell which task %r means. Loaded tasks:\\n%s'
+            % (text, '\\n'.join('    %2d  %s' % (i, _METAWORLD_TASKS[i])
                                 for i in sorted(_METAWORLD_TASKS))))
     return tid
 
@@ -3227,10 +3228,12 @@ print("")
 print("Motion is synchronous -- no 'await'. help_api() lists everything.")
 print("Try the Examples menu for runnable scripts.")`);
 
+        demo.pythonApiReady = true;
         console.log("Python environment initialized");
 
     } catch (error) {
         console.error('Error initializing Python environment:', error);
+        throw error;
     }
 }
 
@@ -3570,8 +3573,8 @@ export function setupPythonIDE(demo) {
 
     // Run Python code
     runButton.addEventListener('click', async () => {
-        if (!window.pyodide) {
-            window.pythonOutput("Pyodide not loaded yet. Please wait...");
+        if (!demo.pythonApiReady) {
+            window.pythonOutput("Python API is not ready. Reload the page; if initialization fails, report the startup error.");
             return;
         }
 

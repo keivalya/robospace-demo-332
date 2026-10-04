@@ -651,7 +651,7 @@ export class RoboSpaceDemo {
 
   async setupPythonIntegration() {
     // Initialize Pyodide
-    if (window.pyodide) { this._markReady('python'); return; }
+    if (this.pythonApiReady) { this._markReady('python'); return; }
 
     try {
       window.pyodide = await loadPyodide({
@@ -669,10 +669,14 @@ export class RoboSpaceDemo {
 
       // Initialize Python environment
       await this.initializePythonEnvironment();
-    } catch (error) {
-      console.error("Failed to load Pyodide:", error);
-    } finally {
       this._markReady('python');
+    } catch (error) {
+      console.error("Failed to initialize Python API:", error);
+      this.setSimStatus?.('error', 'Python API failed');
+      const output = document.getElementById('python-output');
+      if (output) output.textContent = `Python API initialization failed. Reload the page. If this persists, report this error:\n${error.message || error}`;
+      const run = document.getElementById('run-python');
+      if (run) run.disabled = true;
     }
   }
 
@@ -795,6 +799,7 @@ export class RoboSpaceDemo {
       pythonModule.setupPythonIDE(this);
     } catch (error) {
       console.error("Error setting up Python environment:", error);
+      throw error;
     }
   }
 

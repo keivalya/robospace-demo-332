@@ -123,5 +123,13 @@ console.log('\nthe Python prelude must contain no raw backticks');
   if (!checked) bad('found no runPythonAsync template literals to check');
 }
 
+// JS syntax alone cannot validate the Python string delivered to Pyodide.
+try {
+  const result = execFileSync('python3', [path.join(root, 'tools/check-prelude.py')], { encoding: 'utf8' });
+  ok(`runtime Python prelude: ${result.trim()}`);
+} catch (error) {
+  bad(`runtime Python prelude: ${error.stderr?.toString() || error.message}`);
+}
+
 console.log(`\n${failures} failure(s)`);
 process.exit(failures ? 1 : 0);

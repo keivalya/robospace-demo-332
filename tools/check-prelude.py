@@ -24,6 +24,7 @@ import ast
 import io
 import pathlib
 import sys
+import subprocess
 
 HERE = pathlib.Path(__file__).resolve().parent
 TARGET = HERE.parent / "examples" / "pythonIntegration.js"
@@ -51,6 +52,17 @@ def main() -> int:
         print(f"prelude line {line}: '${{' is a JS interpolation, not Python",
               file=sys.stderr)
         return 1
+
+    # Compile exactly what Pyodide receives, after JavaScript cooks escapes.
+    # Parsing the raw source misses a single-backslash newline inside a Python
+    # string: valid Python in this file, invalid Python at runtime.
+    body = subprocess.run(
+        ["node", "--input-type=module", "-e",
+         "import vm from 'node:vm'; import fs from 'node:fs'; "
+         "process.stdout.write(vm.runInNewContext(fs.readFileSync(0, 'utf8'), "
+         "Object.create(null), {timeout: 1000}));"],
+        input="`" + body + "`", text=True, capture_output=True, check=True,
+    ).stdout
 
     # PyCF_ONLY_AST as well, so one parse both validates and yields the tree.
     flags = ast.PyCF_ALLOW_TOP_LEVEL_AWAIT | ast.PyCF_ONLY_AST
