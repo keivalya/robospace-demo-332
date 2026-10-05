@@ -1,6 +1,6 @@
 # First-session defects
 
-Verified 2026-10-05. Cache version 58.
+Verified 2026-10-05. Cache version 59.
 
 Why this file exists: `user_analysis.html` (601 registered users, 2026-06-30) records
 that **94.3% logged in once and never returned** — 567 of 601 — and that only **19.4% of
@@ -72,16 +72,38 @@ the test encoded `8dd6730`'s gripper-POV-only contract, and `c386356` re-added t
 unconditional virtual cameras. One assertion (`name.includes('Gripper POV')`) read the
 machine id instead of `displayName` and **never passed at all**.
 
-## Still open
+### Camera framing and download resilience (fixed 2026-10-05, cache version 59)
 
-- **Both virtual cameras are hardcoded to the Panda workbench**
-  (`examples/utils/CameraViewer.js:573-598`): positions `(0.45, 1.25, 0)` and
-  `(0.95, 0.65, 0)`, with no reference to `model.stat` or any bounding box. For most of
-  the 70 Menagerie robots two of the three camera entries point at empty space.
-- **No timeout or retry in any pack download** (`examples/utils/robotPacks.js:281-297`);
-  a stalled connection hangs the `await` forever. A single dropped asset is swallowed to
-  `console.warn` (`ParentBridge.js:1269-1274`), so the crawl "succeeds" and the user gets
-  a misleading MJCF compile error about a missing mesh instead of "a download failed".
+- **Both virtual cameras were hardcoded to the Panda workbench** — overhead 1.25 m above
+  `(0.45, 0)`, front at `(0.95, 0.65, 0)` — with no reference to the model. It was wrong
+  even for the default scene: the real ur5e's visible geometry centres at **x = −0.398**,
+  so the overhead camera stared about 0.85 m away from the robot it was framing.
+
+  MuJoCo computes exactly the right statistics (`mjStatistic`: `extent`, `center`), but
+  **`stat_extent` and `stat_center` are unbound in this WASM build** and read back
+  `undefined` — the same embind gap as `HEAPU8`, `_malloc` and `model.ptr()`. Probe
+  before relying on any `model.*` field. New `examples/utils/cameraFraming.js` derives
+  bounds from `geom_xpos` instead, excluding `mjGEOM_PLANE` (drawn as a hardcoded
+  100×100 Reflector, so one would swamp the bounds by two orders), `mjGEOM_HFIELD`
+  (draws nothing), and `geom_group >= 3` (the renderer's own visibility rule).
+
+  Bounds are measured **once per model load, not per frame** — recomputing would make
+  both views drift as the arm extends, which is worse than a view that is merely
+  imperfect.
+
+- **Pack downloads had no timeout and no retry.** A connection that *stalls* rather than
+  errors left the `await` pending forever, with the status line still reading "Simulation
+  Ready". New `examples/utils/fetchRetry.js` times out on **stalling, not total
+  duration** — menagerie's largest single file is a 21 MB mesh, so any fixed deadline
+  generous enough for that on a slow link is far too long to catch a hang. Retries skip
+  definitive answers (a 404 is not retried, but still falls through to the next URL).
+
+- **A failed asset download was swallowed** to `console.warn`, so the crawl "succeeded"
+  with a mesh missing and MuJoCo then failed to compile — telling the user their model
+  had an unresolvable asset reference when the actual event was a network failure.
+  Failures are now collected and raised naming the files and the count.
+
+## Still open
 - **Pack downloads triggered from the Scene dropdown show no progress** standalone,
   because `ParentBridge._send` is a no-op with no parent (`:201-202`), while `sim-status`
   still reads "Simulation Ready". Mostly a standalone concern; the embedded editor does
@@ -101,6 +123,14 @@ machine id instead of `displayName` and **never passed at all**.
   (`main.js:870-872`) with no confirmation.
 
 ## Verification
+
+The camera and download work adds `test:framing` (22 assertions against the real
+compiled ur5e, not a mock, because the bug was a set of constants that looked plausible
+in isolation) and `test:fetch` (14 assertions, led by the positive control that a
+*slow but progressing* download must survive — a timeout on total duration would pass
+every stall assertion and still break real users on the 21 MB mesh). Both download paths
+were then exercised against the real network with `test:packs` (Panda, 33 MB) and
+`test:packs -- stretch_3` (73 MB, confirming the >20 MB raw-GitHub fallback).
 
 Every offline suite passes (`node --import ./test/register.mjs test/<name>.test.mjs`),
 `sensors-cameras` for the first time, and `check-scene` exits 0. The P0 fix carries 5 new
