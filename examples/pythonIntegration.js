@@ -3228,13 +3228,18 @@ print("  print_model()                         # what is loaded, and its names")
 print("  move_to('body:hand', pos=[.5,0,.3], quat=tool_down())")
 print("  open_gripper();  close_gripper();  run(1)")
 print("")
-print("Motion is synchronous -- no 'await'. help_api() lists everything.")
+print("Motion is synchronous -- no 'await'. A few advanced calls (control_loop,")
+print("the vla_* and metaworld_* helpers) do need it; help_api() marks those.")
 print("Try the Examples menu for runnable scripts.")`);
 
         demo.pythonApiReady = true;
+        demo.pythonApiFailed = false;
+        _refreshRunAvailability();
         console.log("Python environment initialized");
 
     } catch (error) {
+        demo.pythonApiFailed = true;
+        _refreshRunAvailability();
         console.error('Error initializing Python environment:', error);
         throw error;
     }
@@ -3365,6 +3370,34 @@ function reportPythonError(error) {
     }
 }
 
+/**
+ * Reflects Python's readiness onto the Run button.
+ *
+ * The button used to ship enabled from first paint (index.html), while Pyodide,
+ * numpy and the ~94 kB prelude load from a CDN. Clicking in that window hit the
+ * guard in the Run handler, which told the user to RELOAD THE PAGE -- the one
+ * action that throws away the progress they were waiting on. A first-time visitor
+ * who is merely impatient was being sent around the loop again.
+ *
+ * Derives its state from the flag rather than being toggled by callers, so it is
+ * safe to call from anywhere and in any order -- the editor is set up and the
+ * environment initialised on separate paths with no guaranteed ordering.
+ */
+function _refreshRunAvailability() {
+    const runButton = document.getElementById('run-python');
+    if (!runButton) return;
+    const demo = window._roboDemo;
+    const ready = Boolean(demo?.pythonApiReady);
+    // On failure re-enable, so a click reaches the handler's explanation instead
+    // of leaving a dead button labelled "Starting" for the rest of the session.
+    const failed = Boolean(demo?.pythonApiFailed);
+    runButton.disabled = !ready && !failed;
+    runButton.textContent = ready || failed ? '\u25b6 Run' : '\u231b Starting\u2026';
+    runButton.title = ready || failed
+        ? 'Run script (Ctrl+Enter)'
+        : 'Python is still starting \u2014 Pyodide and the RoboSpace API are loading.';
+}
+
 function _setRunning(isRunning) {
     const runButton = document.getElementById('run-python');
     const stopButton = document.getElementById('stop-python');
@@ -3391,6 +3424,10 @@ robot.arm.home()
 
 export function setupPythonIDE(demo) {
     const runButton = document.getElementById('run-python');
+    // Reflect whatever Python's state already is. Called here rather than hard-coding
+    // `disabled` in index.html on purpose: if this module never loads, the button
+    // keeps its old always-enabled behaviour instead of being dead with no explanation.
+    _refreshRunAvailability();
     const clearButton = document.getElementById('clear-python');
     const codeArea = document.getElementById('python-code');        // hidden fallback
     const outputArea = document.getElementById('python-output');
@@ -3439,9 +3476,10 @@ export function setupPythonIDE(demo) {
         return _editor ? _editor.getValue() : codeArea.value;
     };
 
+    /** @returns {boolean} whether the text was applied (false in blocks mode). */
     const setCode = (text, options = {}) => {
         const silent = options?.silent ?? false;
-        if (_currentMode === 'blocks') return;
+        if (_currentMode === 'blocks') return false;
         if (silent) _suppressDirty = true;
         try {
             if (_editor) _editor.setValue(text);
@@ -3453,6 +3491,7 @@ export function setupPythonIDE(demo) {
         if (!silent) {
             window._roboDemo?.parentBridge?.emitDirty('script');
         }
+        return true;
     };
 
     /**
@@ -3473,7 +3512,25 @@ export function setupPythonIDE(demo) {
 
     // Expose getter/setter/reset for top-level controls (Save, Import, Reset)
     window.getPythonScript = getCode;
-    window.setPythonScript = setCode;
+    /**
+     * External entry point for loading text into the editor.
+     *
+     * Wrapped rather than assigned straight from setCode so blocks mode is not a
+     * silent dead end. setCode returns early there, which made BOTH the Examples
+     * menu (main.js) and file Import (main.js) do precisely nothing -- the dropdown
+     * closed, no code appeared, no error. The editor mode is persisted, so a user
+     * who tried Blocks once landed in that state on every subsequent visit.
+     *
+     * It does NOT switch modes automatically: that would discard the user's blocks,
+     * which is the same class of bug as the robot-load script wipe.
+     */
+    window.setPythonScript = (text, options = {}) => {
+        const applied = setCode(text, options);
+        if (!applied && _currentMode === 'blocks') {
+            window.pythonOutput('That loads into the Python editor, but Blocks mode is active. Switch to Python to see it \u2014 your blocks are kept.');
+        }
+        return applied;
+    };
     window.isScriptUntouched = isScriptUntouched;
 
     /**
@@ -3536,6 +3593,16 @@ export function setupPythonIDE(demo) {
 
     const setEditorMode = (mode) => {
         mode = mode === 'blocks' ? 'blocks' : 'python';
+        // Blockly loads from a CDN. When that is blocked the BlockEditor constructor
+        // bails and leaves _blockEditor null, but this function used to show the
+        // (empty) Blockly host and hide both Python editors regardless -- a blank
+        // white panel with no editor, no blocks and no message. Because the mode is
+        // persisted, it came back blank on every subsequent visit, with no way out
+        // except clearing storage. Fall back to Python and say why.
+        if (mode === 'blocks' && !_blockEditor) {
+            window.pythonOutput('Blocks mode is unavailable: the Blockly library could not be loaded. Staying in the Python editor.');
+            mode = 'python';
+        }
         _currentMode = mode;
         editorStorage.setItem('robospace_editor_mode', mode);
         [modeBtnPython, modeBtnBlocks].forEach((btn) => {
@@ -3630,7 +3697,11 @@ export function setupPythonIDE(demo) {
     // Run Python code
     runButton.addEventListener('click', async () => {
         if (!demo.pythonApiReady) {
-            window.pythonOutput("Python API is not ready. Reload the page; if initialization fails, report the startup error.");
+            // Never say "reload" here: reloading restarts the very download the
+            // user is waiting on. Say what is happening and that it is temporary.
+            window.pythonOutput(demo.pythonApiFailed
+                ? 'Python failed to start. See the error panel for the startup error.'
+                : 'Python is still starting (loading Pyodide and the RoboSpace API). The Run button turns on by itself when it is ready.');
             return;
         }
 

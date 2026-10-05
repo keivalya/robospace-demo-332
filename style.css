@@ -301,6 +301,22 @@ body {
     transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
+/*
+ * Labelled variant. The menu behind this button holds the example scripts --
+ * the product's entire teaching surface, and the one place a new user learns
+ * what the Python API can do. It was an unlabelled "..." at the far right of
+ * the toolbar, while the startup banner printed "Try the Examples menu for
+ * runnable scripts", naming a control that was nowhere on screen.
+ */
+.ide-icon-btn-labelled {
+    width: auto;
+    gap: 6px;
+    padding: 0 10px;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
 .ide-icon-btn:hover {
     background: #1f1f25;
     border-color: #2e2e36;
@@ -1279,6 +1295,7 @@ kbd {
     .sim-control { width: 48px; height: 48px; }
     .overlay-button { min-height: 44px; padding: 10px 14px; font-size: 13px; }
     .ide-icon-btn { width: 40px; height: 40px; font-size: 18px; }
+    .ide-icon-btn-labelled { width: auto; padding: 0 12px; font-size: 14px; }
     .ide-button { min-height: 44px; padding: 10px 16px; font-size: 14px; }
     .console-clear { min-height: 36px; padding: 6px 12px; font-size: 13px; }
     #help-close, #error-panel-clear, #live-plot-close { min-height: 44px; min-width: 44px; }
