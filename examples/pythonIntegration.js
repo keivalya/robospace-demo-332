@@ -3234,12 +3234,12 @@ print("Try the Examples menu for runnable scripts.")`);
 
         demo.pythonApiReady = true;
         demo.pythonApiFailed = false;
-        _refreshRunAvailability();
+        _refreshRunAvailability(demo);
         console.log("Python environment initialized");
 
     } catch (error) {
         demo.pythonApiFailed = true;
-        _refreshRunAvailability();
+        _refreshRunAvailability(demo);
         console.error('Error initializing Python environment:', error);
         throw error;
     }
@@ -3383,10 +3383,15 @@ function reportPythonError(error) {
  * safe to call from anywhere and in any order -- the editor is set up and the
  * environment initialised on separate paths with no guaranteed ordering.
  */
-function _refreshRunAvailability() {
+function _refreshRunAvailability(demoRef) {
     const runButton = document.getElementById('run-python');
     if (!runButton) return;
-    const demo = window._roboDemo;
+    // Takes the demo explicitly. Every call site has it in scope, and reading
+    // window._roboDemo instead would make this depend on the constructor having
+    // assigned it first -- true today (main.js:366, long before Python init), but
+    // an implicit ordering coupling whose failure mode is a Run button that never
+    // turns on for anyone. The fallback covers a stray call with no argument.
+    const demo = demoRef ?? window._roboDemo;
     const ready = Boolean(demo?.pythonApiReady);
     // On failure re-enable, so a click reaches the handler's explanation instead
     // of leaving a dead button labelled "Starting" for the rest of the session.
@@ -3427,7 +3432,7 @@ export function setupPythonIDE(demo) {
     // Reflect whatever Python's state already is. Called here rather than hard-coding
     // `disabled` in index.html on purpose: if this module never loads, the button
     // keeps its old always-enabled behaviour instead of being dead with no explanation.
-    _refreshRunAvailability();
+    _refreshRunAvailability(demo);
     const clearButton = document.getElementById('clear-python');
     const codeArea = document.getElementById('python-code');        // hidden fallback
     const outputArea = document.getElementById('python-output');
