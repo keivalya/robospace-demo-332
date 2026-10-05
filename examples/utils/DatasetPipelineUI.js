@@ -608,7 +608,28 @@ export class DatasetPipelineUI {
 
       statusText.textContent = 'Uploaded successfully!';
       linkBox.style.display = 'block';
-      linkBox.innerHTML = `Dataset published: <a href="${res.url}" target="_blank" rel="noopener">${res.url}</a>`;
+
+      // res.url is built from the repoId typed into the field above, so it is
+      // user input reaching an href and an HTML body. Build nodes instead of
+      // interpolating, and only accept an http(s) URL — a javascript: href here
+      // would run on a panel that is holding a Hugging Face write token.
+      linkBox.replaceChildren();
+      linkBox.appendChild(document.createTextNode('Dataset published: '));
+      let safeHref = null;
+      try {
+        const parsed = new URL(res.url);
+        if (parsed.protocol === 'https:' || parsed.protocol === 'http:') safeHref = parsed.href;
+      } catch (_) { /* not a URL; fall through to plain text */ }
+      if (safeHref) {
+        const a = document.createElement('a');
+        a.href = safeHref;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = safeHref;
+        linkBox.appendChild(a);
+      } else {
+        linkBox.appendChild(document.createTextNode(String(res.url ?? '')));
+      }
     } catch (err) {
       statusText.textContent = `Upload error: ${err.message || err}`;
     }

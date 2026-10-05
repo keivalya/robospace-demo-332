@@ -15,7 +15,7 @@
 //   Child  → parent: READY, LOAD_PROJECT_OK, SNAPSHOT, DIRTY, THUMBNAIL, ERROR, PONG,
 //                    SCENE_OK, SCENE_TEXT, SCENE_PROGRESS
 
-import { resolveEntryXmlPath, snapshotSceneDir } from './safePath.js';
+import { resolveEntryXmlPath, snapshotSceneDir, assertSafePackId, safeRelativePath } from './safePath.js';
 import { CHALLENGES } from './challengeRegistry.js';
 
 const PROTOCOL_VERSION = 1;
@@ -65,6 +65,17 @@ const DEV_ORIGIN_ALLOWLIST = [
   /^http:\/\/10(?:\.\d{1,3}){3}:\d+$/,
   /^http:\/\/192\.168(?:\.\d{1,3}){2}:\d+$/,
   /^http:\/\/172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}:\d+$/,
+];
+
+// Preview deploys, which have an unpredictable origin. These are NOT a trust
+// decision on their own: a vercel.app subdomain is free to register, so this
+// pattern matches a stranger's deploy exactly as well as ours. Membership here
+// only means "may present a nonce" — originAllowed() refuses these unless the
+// HELLO echoes the bridgeNonce from our own URL, which only the page that framed
+// us can know. That is precisely the trade expectedNonce() was introduced to
+// make, and keeping the wildcard in DEV_ORIGIN_ALLOWLIST quietly un-made it:
+// a page carrying no nonce fell through to the origin check alone.
+const NONCE_REQUIRED_ORIGIN_ALLOWLIST = [
   /^https:\/\/[a-z0-9-]+\.vercel\.app$/,
 ];
 
@@ -76,10 +87,13 @@ function isProductionDeploy() {
   }
 }
 
-function originAllowed(origin) {
+function originAllowed(origin, nonceVerified = false) {
   const test = (entry) => (typeof entry === 'string' ? entry === origin : entry.test(origin));
   if (PARENT_ORIGIN_ALLOWLIST.some(test)) return true;
-  return !isProductionDeploy() && DEV_ORIGIN_ALLOWLIST.some(test);
+  if (isProductionDeploy()) return false;
+  if (DEV_ORIGIN_ALLOWLIST.some(test)) return true;
+  // Free-to-register origins: allowed only on proof the parent framed this page.
+  return nonceVerified && NONCE_REQUIRED_ORIGIN_ALLOWLIST.some(test);
 }
 
 /**
@@ -285,13 +299,17 @@ export class ParentBridge {
 
     if (!this.parentOrigin) {
       if (data.type !== 'HELLO') return;
-      if (!originAllowed(event.origin)) {
+      // Resolve the nonce first: for a free-to-register preview origin it is not
+      // an extra check on top of the allowlist, it IS the check. See expectedNonce().
+      const nonce = expectedNonce();
+      const nonceVerified = Boolean(nonce) && data.payload?.bridgeNonce === nonce;
+      if (!originAllowed(event.origin, nonceVerified)) {
         console.warn('[ParentBridge] HELLO from disallowed origin:', event.origin);
         return;
       }
-      // If this page was framed with a nonce, HELLO must echo it. See expectedNonce().
-      const nonce = expectedNonce();
-      if (nonce && data.payload?.bridgeNonce !== nonce) {
+      // If this page was framed with a nonce, HELLO must echo it — for every
+      // origin, not just the ones that require one to be listed at all.
+      if (nonce && !nonceVerified) {
         console.warn('[ParentBridge] HELLO did not present the expected bridgeNonce; ignoring.');
         return;
       }
@@ -692,7 +710,7 @@ export class ParentBridge {
     if (!snap || !snap.entryXmlPath) throw new Error('snapshot missing entryXmlPath');
 
     let sceneDir = snapshotSceneDir(snap.entryXmlPath);
-    const packId = snap.robotPack?.id || (
+    const rawPackId = snap.robotPack?.id || (
       snap.entryXmlPath &&
       snap.entryXmlPath.includes('/') &&
       !snap.entryXmlPath.startsWith('custom_scenes/') &&
@@ -700,6 +718,14 @@ export class ParentBridge {
         ? snap.entryXmlPath.split('/')[0]
         : null
     );
+
+    // snapshotSceneDir only guards the custom_scenes/ branch; it returns null for
+    // everything else, and that is exactly the branch whose directory comes from
+    // the snapshot's own robotPack.id or the first segment of entryXmlPath. Both
+    // are caller-controlled and both became sceneDir unvalidated, so a packId of
+    // ".." aimed the _rmrf below at /working/.. — the MEMFS root. Validate before
+    // anything is deleted, not after.
+    const packId = rawPackId === null ? null : assertSafePackId(rawPackId);
 
     if (!sceneDir && packId) {
       sceneDir = packId;
@@ -1044,6 +1070,12 @@ export class ParentBridge {
       throw new Error('LOAD_MENAGERIE_ROBOT requires xml_path and dir in payload.');
     }
 
+    // Both branches below build /working/<makerDir> from this value — the pack
+    // branch passes it to ensureRobotPack as the scene dir, the fallback branch
+    // into URLs and _rmrf. Validate once, here, so neither can be reached with a
+    // path segment. The payload is whatever the parent sent us.
+    assertSafePackId(makerDir);
+
     const { sceneWriter, robotPacks } = await this._agentModules();
     const demo = this.demo;
 
@@ -1110,9 +1142,16 @@ export class ParentBridge {
     const demo = this.demo;
     const FS = demo.mujoco.FS;
 
-    const entryFileName = xmlRelPath.includes('/')
-      ? xmlRelPath.split('/').slice(1).join('/')
-      : xmlRelPath;
+    // makerDir arrives from LOAD_MENAGERIE_ROBOT's payload.model.dir and from
+    // applySnapshot's packId. It is interpolated into both the upstream URLs and
+    // /working/<makerDir>, so an unvalidated "../.." walked the GitHub URL up to
+    // an arbitrary repository (whose XML then gets compiled) and pointed _rmrf at
+    // the MEMFS root. This is the guard that pins the fetch to mujoco_menagerie.
+    assertSafePackId(makerDir);
+
+    const entryFileName = safeRelativePath(
+      xmlRelPath.includes('/') ? xmlRelPath.split('/').slice(1).join('/') : xmlRelPath,
+    );
 
     const fetchedFiles = new Map();
     const pendingXmls = [entryFileName];
@@ -1122,7 +1161,13 @@ export class ParentBridge {
 
     const cache = robotPacks.createIdbCache();
 
-    const fetchBytes = async (relPath) => {
+    const fetchBytes = async (rawRelPath) => {
+      // Guarded at the sink. relPath comes from `file=` attributes inside fetched
+      // XML (include, mesh, skin, hfield) and from meshdir/assetdir joined onto
+      // them, so it is model-controlled. It lands in a URL *and* in a MEMFS path;
+      // confining it here covers the fetch, and the write loop below repeats the
+      // check because it is a second sink, not the same one.
+      const relPath = safeRelativePath(rawRelPath);
       const cacheKey = `menagerie/${makerDir}/${relPath}`;
       try {
         const cached = await cache.get(cacheKey);
@@ -1240,7 +1285,9 @@ export class ParentBridge {
     this._ensureDir(rootDir);
 
     for (const [relPath, fileData] of fetchedFiles.entries()) {
-      const fullPath = `${rootDir}/${relPath}`;
+      // Second sink, second check — see fetchBytes. A map key that reached this
+      // loop without passing safeRelativePath would write outside rootDir.
+      const fullPath = `${rootDir}/${safeRelativePath(relPath)}`;
       this._ensureParentDirs(fullPath);
       FS.writeFile(fullPath, fileData);
     }

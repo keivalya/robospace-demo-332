@@ -37,6 +37,38 @@ export function assertSafeSceneName(sceneName) {
 }
 
 /**
+ * A robot pack / menagerie maker directory must be a single, ordinary directory name.
+ *
+ * Same shape as a scene name, different call sites and a different error message.
+ * This is the guard `applySnapshot` and `_fetchAndWriteMenagerieRobot` were missing:
+ * `snapshotSceneDir` only validates the `custom_scenes/` branch, and everything NOT
+ * under `custom_scenes/` took its directory straight from `snap.robotPack.id`,
+ * `entryXmlPath.split('/')[0]`, or `LOAD_MENAGERIE_ROBOT`'s `payload.model.dir` —
+ * none of them checked. A value of ".." made the recursive delete that follows
+ * target `/working/..`, i.e. the MEMFS root, and the same value interpolated into
+ * `https://raw.githubusercontent.com/google-deepmind/mujoco_menagerie/main/<dir>/...`
+ * walks the URL up to an arbitrary repository, whose XML is then compiled.
+ *
+ * So this is not only a delete guard: it is what pins the asset fetch to the one
+ * upstream repo it is supposed to read from.
+ */
+export function assertSafePackId(packId) {
+  if (typeof packId !== 'string' || !packId) {
+    throw new Error('Robot pack id is required.');
+  }
+  if (packId.length > 64) {
+    throw new Error(`Robot pack id "${packId.slice(0, 32)}…" is too long (max 64 characters).`);
+  }
+  if (!SAFE_SCENE_NAME.test(packId) || packId.includes('..')) {
+    throw new Error(
+      `Invalid robot pack id "${packId}": must start with a letter or digit and contain only `
+      + 'letters, digits, dot, dash or underscore. It is a single directory name, not a path.',
+    );
+  }
+  return packId;
+}
+
+/**
  * Normalises a model-supplied file path to something guaranteed to stay inside the
  * scene directory. Rejects absolute paths, backslashes, and any "." or ".." segment
  * rather than pattern-matching on substrings — `a/../../b` contains no leading ".."

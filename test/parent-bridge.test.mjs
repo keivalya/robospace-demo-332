@@ -334,6 +334,45 @@ console.log('\nframing controls');
 }
 
 {
+  // A *.vercel.app subdomain is free to register, so matching that pattern cannot
+  // by itself be a trust decision — the nonce is what distinguishes our preview
+  // deploy from a stranger's. Previously the wildcard sat in DEV_ORIGIN_ALLOWLIST,
+  // where a parent presenting NO nonce was accepted on the origin check alone.
+  const PREVIEW = 'https://robospace-git-feat-abc.vercel.app';
+
+  messageListeners.clear();
+  sent = [];
+  const noNonce = new ParentBridge(createFakeDemo());
+  deliver('HELLO', { parentOrigin: PREVIEW }, { origin: PREVIEW });
+  await new Promise((r) => setTimeout(r, 20));
+  check(typed('READY').length === 0 && noNonce.parentOrigin === null,
+    'a vercel.app origin with no nonce is refused even off production');
+
+  // Positive control: the same origin WITH the nonce must still connect, or this
+  // has simply broken preview deploys rather than secured them.
+  window.location.search = '?bridgeNonce=preview-secret';
+  try {
+    messageListeners.clear();
+    sent = [];
+    const withNonce = new ParentBridge(createFakeDemo());
+    deliver('HELLO', { parentOrigin: PREVIEW, bridgeNonce: 'preview-secret' }, { origin: PREVIEW });
+    await new Promise((r) => setTimeout(r, 20));
+    check(typed('READY').length === 1 && withNonce.parentOrigin === PREVIEW,
+      'and is accepted when it echoes the nonce from our URL');
+
+    messageListeners.clear();
+    sent = [];
+    const wrongNonce = new ParentBridge(createFakeDemo());
+    deliver('HELLO', { parentOrigin: PREVIEW, bridgeNonce: 'guessed' }, { origin: PREVIEW });
+    await new Promise((r) => setTimeout(r, 20));
+    check(typed('READY').length === 0 && wrongNonce.parentOrigin === null,
+      'a wrong nonce from a vercel.app origin is refused');
+  } finally {
+    window.location.search = '';
+  }
+}
+
+{
   // Off production, localhost must still connect or local development stops working.
   messageListeners.clear();
   sent = [];
@@ -672,6 +711,65 @@ console.log('\nsnapshot path confinement');
   check(demo.mujoco.FS.files.has('/working/custom_scenes/kitchen/scene.xml'),
     'a well-formed snapshot still applies');
   eq(demo.params.scene, 'custom_scenes/kitchen/scene.xml', 'and selects its scene');
+}
+
+console.log('\npack id confinement');
+{
+  // snapshotSceneDir() only ever guarded the custom_scenes/ branch — it returns
+  // null for everything else, and THAT is the branch whose directory came from
+  // snap.robotPack.id or entryXmlPath.split('/')[0]. Neither was validated, so a
+  // packId of ".." made the rmrf below target /working/.., the MEMFS root.
+  const { bridge, demo } = newBridge();
+  bridge._agentModulesPromise = Promise.resolve({
+    sceneWriter: realSceneWriter,
+    robotPacks: {
+      MENAGERIE_COMMIT: 'abc123',
+      ROBOT_MANIFESTS: { franka_panda: {} },
+      ensureRobotPack: async () => ({ homePose: null, paths: [] }),
+    },
+  });
+
+  // Positive control first. Without it, every assertion below would pass just as
+  // happily if applySnapshot had started throwing on everything.
+  await bridge.applySnapshot({
+    schemaVersion: 2, sceneName: 'panda', entryXmlPath: 'franka_panda/scene.xml',
+    robotPack: { id: 'franka_panda', commit: 'abc123' }, files: [], sim: null,
+  });
+  eq(demo.params.scene, 'franka_panda/scene.xml', 'a legitimate pack id still loads');
+
+  const rejects = async (snap, label) => {
+    let threw = false;
+    try { await bridge.applySnapshot(snap); } catch (_) { threw = true; }
+    check(threw, label);
+  };
+
+  await rejects({
+    schemaVersion: 2, sceneName: 'x', entryXmlPath: 'anything/scene.xml',
+    robotPack: { id: '..' }, files: [],
+  }, 'a robotPack.id of ".." is refused before anything is deleted');
+  await rejects({
+    schemaVersion: 2, sceneName: 'x', entryXmlPath: '../evil/scene.xml', files: [],
+  }, 'a packId derived from a ".." entryXmlPath segment is refused');
+  await rejects({
+    schemaVersion: 2, sceneName: 'x', entryXmlPath: 'anything/scene.xml',
+    robotPack: { id: 'a/b' }, files: [],
+  }, 'a robotPack.id containing a slash is refused');
+}
+
+{
+  // makerDir reaches both _rmrf and the raw.githubusercontent URL, so "../.." there
+  // walked the fetch up to an arbitrary repository whose XML then gets compiled.
+  const { bridge } = newBridge();
+  bridge._agentModulesPromise = Promise.resolve({
+    sceneWriter: realSceneWriter,
+    robotPacks: { MENAGERIE_COMMIT: 'abc', ROBOT_MANIFESTS: {}, createIdbCache: () => ({ get: async () => null, set: async () => {} }) },
+  });
+
+  for (const dir of ['..', '../../attacker/evil/main', 'a/b']) {
+    let threw = false;
+    try { await bridge._fetchAndWriteMenagerieRobot(dir, 'scene.xml', null); } catch (_) { threw = true; }
+    check(threw, `_fetchAndWriteMenagerieRobot refuses a maker dir of "${dir}"`);
+  }
 }
 
 {
