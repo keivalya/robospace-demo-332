@@ -26,6 +26,7 @@
     "test:scene": "node --import ./test/register.mjs tools/check-scene.mjs test/fixtures/kitchen_stretch.xml",
     "test:sensors": "node --import ./test/register.mjs test/sensors-cameras.test.mjs",
     "test:framing": "node --import ./test/register.mjs test/camera-framing.test.mjs",
+    "test:fetch": "node --import ./test/register.mjs test/fetch-retry.test.mjs",
     "test:challenges": "node --import ./test/register.mjs test/challenge-evaluator.test.mjs",
     "test:dataset": "node test/data-logger.test.mjs && node test/lerobot-exporter.test.mjs && node test/macro-teacher.test.mjs && node test/camera-capture.test.mjs",
     "test:analytics": "node test/analytics.test.mjs",

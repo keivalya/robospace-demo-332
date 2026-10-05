@@ -25,6 +25,7 @@
 // in IndexedDB keyed by the pinned commit — the second load of a robot is local.
 
 import { MENAGERIE_COMMIT, ROBOT_MANIFESTS as MENAGERIE_MANIFESTS } from './robotManifests.js';
+import { fetchBytesWithRetry } from './fetchRetry.js';
 import { METAWORLD_MANIFESTS } from './metaworldManifest.js';
 import { selectedImpl } from './mujocoModule.js';
 
@@ -278,22 +279,19 @@ function ensureDir(FS, dirPath) {
 
 // ─── fetching ───────────────────────────────────────────────────────────────
 
-async function fetchBytes(fetchImpl, upstreamDir, file, src) {
+async function fetchBytes(fetchImpl, upstreamDir, file, src, opts = {}) {
   const attempts = file.viaRaw
     ? [rawUrl(upstreamDir, file.path, src)]
     : [cdnUrl(upstreamDir, file.path, src), rawUrl(upstreamDir, file.path, src)];
 
-  let lastError = null;
-  for (const url of attempts) {
-    try {
-      const res = await fetchImpl(url);
-      if (!res.ok) { lastError = new Error(`HTTP ${res.status} for ${url}`); continue; }
-      return new Uint8Array(await res.arrayBuffer());
-    } catch (e) {
-      lastError = e;
-    }
+  // Previously one shot per URL with no timeout, so a connection that stalled rather
+  // than errored left this await pending forever -- and with it the whole pack load,
+  // with no Stop button and a status line still reading "Simulation Ready".
+  try {
+    return await fetchBytesWithRetry(fetchImpl, attempts, opts);
+  } catch (e) {
+    throw new Error(`Could not download ${file.path}: ${e.message}`);
   }
-  throw new Error(`Could not download ${file.path}: ${lastError ? lastError.message : 'unknown error'}`);
 }
 
 /**
@@ -344,7 +342,11 @@ export async function ensureRobotPack(mujoco, packId, sceneDir, opts = {}) {
     let data = null;
     try { data = await cache.get(key); } catch (_) { /* cache miss is not fatal */ }
     if (!data) {
-      data = await fetchBytes(fetchImpl, upstreamDir, file, manifest);
+      data = await fetchBytes(fetchImpl, upstreamDir, file, manifest, {
+        stallMs: opts.stallMs,
+        retries: opts.retries,
+        onAttemptFailed: opts.onAttemptFailed,
+      });
       try { await cache.set(key, data); } catch (_) { /* nor is a failed write */ }
     }
     const full = `${root}/${file.path}`;

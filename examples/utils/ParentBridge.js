@@ -16,6 +16,7 @@
 //                    SCENE_OK, SCENE_TEXT, SCENE_PROGRESS
 
 import { resolveEntryXmlPath, snapshotSceneDir, assertSafePackId, safeRelativePath } from './safePath.js';
+import { fetchBytesWithRetry } from './fetchRetry.js';
 import { CHALLENGES } from './challengeRegistry.js';
 
 const PROTOCOL_VERSION = 1;
@@ -1190,17 +1191,17 @@ export class ParentBridge {
       if (parentUrl) attempts.push(parentUrl);
       attempts.push(localUrl);
 
-      for (const url of attempts) {
-        try {
-          const res = await fetch(url);
-          if (res.ok) {
-            const bytes = new Uint8Array(await res.arrayBuffer());
-            try { await cache.set(cacheKey, bytes); } catch (_) {}
-            return bytes;
-          }
-        } catch (_) {}
+      // Same treatment as robotPacks: a stall timeout and retries. One attempt per
+      // URL with no deadline meant a socket that opened and then delivered nothing
+      // left this await pending forever, taking the whole robot load with it.
+      let bytes;
+      try {
+        bytes = await fetchBytesWithRetry(fetch, attempts);
+      } catch (e) {
+        throw new Error(`Could not fetch asset ${makerDir}/${relPath}: ${e.message}`);
       }
-      throw new Error(`Could not fetch asset ${makerDir}/${relPath}`);
+      try { await cache.set(cacheKey, bytes); } catch (_) { /* cache write is optional */ }
+      return bytes;
     };
 
     while (pendingXmls.length > 0) {
@@ -1269,6 +1270,12 @@ export class ParentBridge {
     // Bounded parallelism (8 workers) for ultra-fast asset downloading
     const CONCURRENCY = 8;
     const queue = Array.from(assetFiles);
+    // Failures are collected rather than swallowed. They used to go to console.warn
+    // only, so the crawl "succeeded" with a mesh missing and MuJoCo then failed to
+    // compile -- handing the user a diagnostic about an unresolvable asset reference
+    // when the actual event was a failed download. Two very different fixes, and the
+    // message pointed at the wrong one.
+    const failedAssets = [];
     const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
       for (;;) {
         const assetFile = queue.shift();
@@ -1277,6 +1284,7 @@ export class ParentBridge {
           const data = await fetchBytes(assetFile);
           fetchedFiles.set(assetFile, data);
         } catch (e) {
+          failedAssets.push({ path: assetFile, message: String(e && e.message ? e.message : e) });
           console.warn(`[ParentBridge] could not fetch asset ${makerDir}/${assetFile}:`, e);
         }
         doneCount++;
@@ -1286,6 +1294,16 @@ export class ParentBridge {
       }
     });
     await Promise.all(workers);
+
+    if (failedAssets.length) {
+      const shown = failedAssets.slice(0, 3).map((f) => f.path).join(', ');
+      const more = failedAssets.length > 3 ? `, and ${failedAssets.length - 3} more` : '';
+      throw new Error(
+        `${failedAssets.length} of ${totalCount} asset(s) failed to download for ${makerDir} `
+        + `(${shown}${more}). The model was not loaded. This is a network problem, not a problem `
+        + `with the model: check your connection and try again. First error: ${failedAssets[0].message}`,
+      );
+    }
 
     const rootDir = `/working/${makerDir}`;
     this._rmrf(rootDir);
