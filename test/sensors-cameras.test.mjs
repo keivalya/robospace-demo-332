@@ -227,12 +227,24 @@ console.log('\nmodel with camera and sensor compilation & decoding');
   const camViewer = new CameraViewer(container);
   camViewer.setToggleButton(camBtn);
 
-  // Model without cameras or end-effector:
+  // Model without cameras or end-effector.
+  //
+  // This block used to assert zero cameras and a hidden button, which was the
+  // contract at 8dd6730 ("restrict cameras to robot point-of-view"). The later
+  // commit c386356 re-added two unconditional virtual cameras -- overhead and
+  // front (CameraViewer.js:192-214) -- and nobody updated the test, so the suite
+  // has been red ever since and the signal was being ignored. These assertions
+  // now describe what actually ships.
   camViewer.onModelChanged(modelNoSensors, simNoSensors);
-  check(camViewer.cameras.length === 0, 'no cameras created when model lacks cameras and end-effector');
-  check(camBtn.style.display === 'none', 'camera button is hidden when no camera or end-effector exists');
+  check(camViewer.cameras.length === 2,
+    'overhead and front cameras exist even with no native camera or end-effector');
+  check(camViewer.cameras.every((c) => c.isVirtual),
+    'and both are virtual');
+  check(camBtn.style.display === '', 'camera button is shown because cameras exist');
   camViewer.show();
-  check(!camViewer.visible, 'show() does not open viewer when cameras.length is 0');
+  check(camViewer.visible, 'show() opens the viewer when cameras exist');
+  camViewer.hide();
+  check(!camViewer.visible, 'hide() closes it again');
 
   console.log('\nCameraViewer Gripper POV on model with attachment_site');
   const testSceneArm = `
@@ -257,12 +269,24 @@ console.log('\nmodel with camera and sensor compilation & decoding');
   simArm.forward();
 
   camViewer.onModelChanged(modelArm, simArm);
-  check(camViewer.cameras.length === 1, 'exactly 1 onboard camera created (Gripper POV)');
+  check(camViewer.cameras.length === 3,
+    'a gripper site adds a POV camera alongside overhead and front');
   check(camViewer.cameras[0].id === 'gripper_pov', 'camera id is gripper_pov');
-  check(camViewer.cameras[0].name.includes('Gripper POV'), 'camera name is Gripper POV');
+  // The human-readable string lives on displayName; `name` is the stable machine
+  // id ('gripper_camera'). The old assertion read `name` for 'Gripper POV', which
+  // matched neither field -- it was committed red and never passed.
+  check(camViewer.cameras[0].displayName.includes('Gripper'),
+    'displayName carries the human-readable name');
+  check(camViewer.cameras[0].displayName.includes('attachment_site'),
+    'and names the site it is attached to');
+  check(camViewer.cameras[0].name === 'gripper_camera', 'name is the stable machine id');
   check(camBtn.style.display === '', 'camera button is displayed when Gripper POV exists');
   check(camBtn.textContent.includes('POV'), 'button label shows POV');
 
+  // Establish a known state first: the block above left the viewer hidden, so a
+  // click must open it. Without this the toggle assertions depend on whatever the
+  // previous block happened to leave behind, which is how they started failing.
+  camViewer.hide();
   camBtn.click();
   check(camViewer.visible, 'clicking camera button toggles visible');
   check(camBtn.classList.contains('active'), 'camera button gets active class');
