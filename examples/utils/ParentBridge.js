@@ -1125,8 +1125,15 @@ export class ParentBridge {
       sceneWriter.applyHomePose(demo, homePose);
     }
 
+    // Only if the editor still holds untouched starter content. This used to be
+    // unconditional, which made picking a robot from the Scene dropdown overwrite
+    // the user's script in the editor, in localStorage, and — via emitDirty and the
+    // parent's autosave — in Firestore. That is permanent loss of saved work, and it
+    // was intermittent: the branch at main.js:472 is `FS.analyzePath(...).exists`, so
+    // only the FIRST selection of a given robot per session took this path. MEMFS is
+    // empty on every page load, so it recurred every session.
     if (typeof window.resetPythonScript === 'function') {
-      window.resetPythonScript();
+      window.resetPythonScript({ onlyIfUntouched: true });
     }
 
     return {

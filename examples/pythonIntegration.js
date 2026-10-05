@@ -3455,16 +3455,62 @@ export function setupPythonIDE(demo) {
         }
     };
 
+    /**
+     * True when the editor still holds starter content nobody has edited.
+     *
+     * Exists so an *automatic* reset can tell "this is still the default" from
+     * "this is the user's work". Compared trimmed: CodeMirror normalises trailing
+     * whitespace on load, so an exact match would read every untouched editor as
+     * modified and defeat the check.
+     */
+    const isScriptUntouched = () => {
+        const current = getCode().trim();
+        if (!current) return true;
+        if (current === DEFAULT_SCRIPT.trim()) return true;
+        const starter = window._roboDemo?.challengeEvaluator?.activeChallenge?.starterPython;
+        return Boolean(starter) && current === starter.trim();
+    };
+
     // Expose getter/setter/reset for top-level controls (Save, Import, Reset)
     window.getPythonScript = getCode;
     window.setPythonScript = setCode;
-    window.resetPythonScript = () => {
+    window.isScriptUntouched = isScriptUntouched;
+
+    /**
+     * Replace the editor contents with the starter script.
+     *
+     * `onlyIfUntouched` is for callers that reset as a SIDE EFFECT of doing
+     * something else — loading a robot, say. Without it this overwrote the editor,
+     * localStorage, and — through setCode's emitDirty, the parent's dirty
+     * subscription and its autosave — the saved project in Firestore. Picking a
+     * robot from the Scene dropdown therefore destroyed whatever the user had
+     * written, permanently and with no undo.
+     *
+     * Passing `{ silent: true }` to setCode would NOT have fixed it: that only
+     * suppresses the autosave, leaving the editor wiped while Firestore still held
+     * the old script — a divergence worse than the original bug. Refusing to
+     * overwrite user content is the fix; suppressing the symptom is not.
+     *
+     * The two deliberate callers — the Reset menu item (main.js) and a brand-new
+     * project (_handleNewProject) — pass nothing and still always reset.
+     *
+     * @param {{onlyIfUntouched?: boolean}} [options]
+     * @returns {boolean} whether the script was actually replaced.
+     */
+    window.resetPythonScript = (options = {}) => {
+        const onlyIfUntouched = options?.onlyIfUntouched ?? false;
         if (_currentMode === 'blocks') {
+            // A blocks workspace has no persisted baseline to diff against, so
+            // "untouched" is unknowable here. Refuse the automatic path rather
+            // than discard a workspace the user assembled.
+            if (onlyIfUntouched) return false;
             _blockEditor?.loadDefaultBlocks();
-        } else {
-            const challengeStarter = window._roboDemo?.challengeEvaluator?.activeChallenge?.starterPython;
-            setCode(challengeStarter || DEFAULT_SCRIPT);
+            return true;
         }
+        if (onlyIfUntouched && !isScriptUntouched()) return false;
+        const challengeStarter = window._roboDemo?.challengeEvaluator?.activeChallenge?.starterPython;
+        setCode(challengeStarter || DEFAULT_SCRIPT);
+        return true;
     };
 
     if (_editor) {

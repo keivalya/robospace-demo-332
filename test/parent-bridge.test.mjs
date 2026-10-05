@@ -930,6 +930,68 @@ console.log('\nsnapshot v2 — apply');
     'a mismatched saved state degrades to the home pose rather than qpos0');
 }
 
+console.log('\nrobot load must not destroy the user script');
+{
+  // Picking a robot from the Scene dropdown used to call resetPythonScript()
+  // unconditionally. That overwrote the editor, localStorage, and — because
+  // setCode fires emitDirty, which the parent's dirty subscription turns into an
+  // autosave — the saved project in Firestore. Permanent loss of saved work.
+  const { bridge } = newBridge();
+  bridge._agentModulesPromise = Promise.resolve({
+    sceneWriter: realSceneWriter,
+    robotPacks: {
+      MENAGERIE_COMMIT: 'abc123',
+      ROBOT_MANIFESTS: { franka_panda: {} },
+      ensureRobotPack: async () => ({ homePose: null, paths: [], entry: 'scene.xml' }),
+    },
+  });
+
+  const DEFAULT = 'import time\n# starter script\n';
+  let currentScript = DEFAULT;
+  const resetCalls = [];
+  globalThis.window = globalThis.window || {};
+  globalThis.window.getPythonScript = () => currentScript;
+  globalThis.window.setPythonScript = (s) => { currentScript = s; };
+  // Stands in for pythonIntegration's real implementation, honouring the flag the
+  // same way: refuse when the editor holds anything but untouched starter content.
+  globalThis.window.resetPythonScript = (options = {}) => {
+    resetCalls.push(options);
+    if (options?.onlyIfUntouched && currentScript.trim() !== DEFAULT.trim()) return false;
+    currentScript = DEFAULT;
+    return true;
+  };
+
+  const loadRobot = async () => {
+    const id = deliver('LOAD_MENAGERIE_ROBOT', {
+      robot: { robotId: 'franka_panda', dir: 'franka_panda', xml_path: 'franka_panda/scene.xml' },
+    });
+    await waitForReply(id);
+  };
+
+  // POSITIVE CONTROL. Without this, every assertion below would pass just as
+  // happily if the handler had stopped calling resetPythonScript at all — or
+  // stopped running entirely.
+  await loadRobot();
+  eq(resetCalls.length, 1, 'loading a robot still calls resetPythonScript');
+  eq(resetCalls[0]?.onlyIfUntouched, true, 'and asks it to spare edited content');
+  eq(currentScript, DEFAULT, 'an untouched starter script is still reset');
+
+  // The regression itself.
+  const userScript = 'robot.arm.move_to([0.4, 0.0, 0.25])  # my work';
+  currentScript = userScript;
+  await loadRobot();
+  eq(currentScript, userScript, 'a user-edited script SURVIVES loading a robot');
+
+  // Explicit resets are unaffected: the user asked for those.
+  deliver('NEW_PROJECT', { projectId: 'fresh' });
+  await new Promise((r) => setTimeout(r, 20));
+  eq(currentScript, DEFAULT, 'a brand-new project still resets the script');
+
+  delete globalThis.window.resetPythonScript;
+  delete globalThis.window.getPythonScript;
+  delete globalThis.window.setPythonScript;
+}
+
 console.log('\nchallenge script persistence & lifecycle');
 {
   const { bridge, demo } = newBridge();
