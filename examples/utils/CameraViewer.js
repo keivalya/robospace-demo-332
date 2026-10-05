@@ -8,6 +8,7 @@
 
 import * as THREE from 'three';
 import { readNames, getPosition } from '../mujocoUtils.js';
+import { computeVisibleBounds, framingFor } from './cameraFraming.js';
 
 export class CameraViewer {
   constructor(containerEl) {
@@ -16,6 +17,10 @@ export class CameraViewer {
     this._minimized = false;
     this._activeCameraIndex = 0;
     this._cameras = [];
+    // Visible-geometry bounds of the loaded model, set in onModelChanged. Null until
+    // then, and null for a model with nothing drawable; _updateVirtualCamera falls
+    // back to fixed placements in that case.
+    this._bounds = null;
 
     this._threeCamera = new THREE.PerspectiveCamera(45, 4 / 3, 0.01, 100);
     this._matrix4 = new THREE.Matrix4();
@@ -107,6 +112,12 @@ export class CameraViewer {
    */
   onModelChanged(model, simulation) {
     this._cameras = [];
+
+    // Measured ONCE here, not per frame, and deliberately so. These bounds decide
+    // where the Overhead and Front cameras sit; recomputing them every frame would
+    // make both views drift and breathe as the arm extends and retracts, which is
+    // worse than a view that is merely imperfect. The pose at load is representative.
+    this._bounds = computeVisibleBounds(model, simulation);
 
     let hasWristCamera = false;
     let hasOverheadCamera = false;
@@ -570,30 +581,39 @@ export class CameraViewer {
   _updateVirtualCamera(cam, simulation, model) {
     this._threeCamera.fov = cam.fovy || 75;
 
-    if (cam.virtualType === 'overhead') {
-      // Top-down camera placed overhead looking straight down onto table/workspace
-      const cx = 0.45;
-      const cy = 0.0;
-      // In Three.js coordinates: X_three = X_mu (0.45), Y_three = Z_mu (1.25), Z_three = -Y_mu (0.0)
-      this._threeCamera.position.set(cx, 1.25, -cy);
-      this._threeCamera.up.set(1, 0, 0); // pointing forward (+X) along table
-      this._threeCamera.lookAt(new THREE.Vector3(cx, 0.0, -cy));
-      this._threeCamera.updateMatrix();
-      this._threeCamera.updateMatrixWorld(true);
-      this._threeCamera.matrixAutoUpdate = false;
-      this._threeCamera.fov = cam.fovy || 60;
-      return;
-    }
+    // The two synthetic views. Both were hardcoded to the Franka workbench --
+    // overhead 1.25 m above (0.45, 0), front at (0.95, 0.65, 0) -- with no reference
+    // to the model, so for most of the ~70 Menagerie robots they pointed at empty
+    // space. They are now derived from the model's own visible bounds; the literals
+    // below survive only as the fallback for a model that exposes nothing drawable.
+    if (cam.virtualType === 'overhead' || cam.virtualType === 'front') {
+      const isOverhead = cam.virtualType === 'overhead';
+      const fovy = cam.fovy || (isOverhead ? 60 : 55);
+      const frame = framingFor(cam.virtualType, this._bounds, fovy);
 
-    if (cam.virtualType === 'front') {
-      // Front spectator camera angled down at the workspace
-      this._threeCamera.position.set(0.95, 0.65, 0.0);
-      this._threeCamera.up.set(0, 1, 0);
-      this._threeCamera.lookAt(new THREE.Vector3(0.45, 0.08, 0.0));
+      // MuJoCo is Z-up, three.js is Y-up: X_three = X_mu, Y_three = Z_mu, Z_three = -Y_mu.
+      const toThree = (v) => new THREE.Vector3(v[0], v[2], -v[1]);
+
+      if (frame) {
+        this._threeCamera.position.copy(toThree(frame.position));
+        // Overhead looks straight down, where the default up vector is degenerate:
+        // pick +X so the view is stable and reads as "along the workspace".
+        this._threeCamera.up.set(isOverhead ? 1 : 0, isOverhead ? 0 : 1, 0);
+        this._threeCamera.lookAt(toThree(frame.target));
+      } else if (isOverhead) {
+        this._threeCamera.position.set(0.45, 1.25, 0);
+        this._threeCamera.up.set(1, 0, 0);
+        this._threeCamera.lookAt(new THREE.Vector3(0.45, 0, 0));
+      } else {
+        this._threeCamera.position.set(0.95, 0.65, 0.0);
+        this._threeCamera.up.set(0, 1, 0);
+        this._threeCamera.lookAt(new THREE.Vector3(0.45, 0.08, 0.0));
+      }
+
       this._threeCamera.updateMatrix();
       this._threeCamera.updateMatrixWorld(true);
       this._threeCamera.matrixAutoUpdate = false;
-      this._threeCamera.fov = cam.fovy || 55;
+      this._threeCamera.fov = fovy;
       return;
     }
 
