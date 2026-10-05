@@ -156,7 +156,7 @@
                 <button id="pause-button" class="sim-control" title="Pause/Play (Space)" aria-label="Pause or play simulation">⏸</button>
                 <button id="reset-button" class="sim-control" title="Reset robot (R)" aria-label="Reset robot">↺</button>
             </div>
-            <script type="module" src="./examples/main.js?v=55"></script>
+            <script type="module" src="./examples/main.js?v=56"></script>
         </div>
 
         <!-- Vertical divider -->
@@ -208,7 +208,8 @@
             const left   = document.getElementById('appbody');
             const handle = document.getElementById('split-handle');
 
-            const saved = parseFloat(localStorage.getItem(STORAGE_KEY));
+            let saved = NaN;
+            try { saved = parseFloat(localStorage.getItem(STORAGE_KEY)); } catch (_) { }
             const initRatio = (!isNaN(saved) && saved >= MIN_RATIO && saved <= MAX_RATIO) ? saved : DEFAULT_RATIO;
             left.style.flexBasis = (initRatio * 100) + '%';
 
@@ -237,7 +238,7 @@
                 document.body.style.cursor = '';
                 const rect = split.getBoundingClientRect();
                 const finalRatio = (left.getBoundingClientRect().width) / rect.width;
-                localStorage.setItem(STORAGE_KEY, finalRatio.toFixed(4));
+                try { localStorage.setItem(STORAGE_KEY, finalRatio.toFixed(4)); } catch (_) { }
                 handle.releasePointerCapture(e.pointerId);
                 if (window._blockEditor) window._blockEditor.resize();
             });

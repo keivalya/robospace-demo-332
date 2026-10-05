@@ -4,14 +4,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { DragStateManager } from './utils/DragStateManager.js';
 import { downloadExampleScenesFolder, loadSceneFromURL, compileModel, getPosition, getQuaternion, toMujocoPos, standardNormal } from './mujocoUtils.js';
 import { loadMujocoModule as load_mujoco } from './utils/mujocoModule.js';
-import { FileUploadManager } from './utils/FileUploadManager.js';
 import { LivePlotter } from './utils/LivePlotter.js';
 import { CameraViewer } from './utils/CameraViewer.js';
 import { ChallengeEvaluator } from './utils/ChallengeEvaluator.js';
 import { DatasetPipelineUI } from './utils/DatasetPipelineUI.js';
 import { ParentBridge } from './utils/ParentBridge.js';
 import { mujocoLogHooks } from './utils/mujocoLog.js';
-import { resolveInitialScene, readStoredScene, forgetStoredScene, DEFAULT_SCENE } from './utils/initialScene.js';
 import { SimClock } from './utils/simClock.js';
 import {
   emitAnalytics, attachAnalyticsSink, flushAnalytics, dropAnalyticsQueue,
@@ -30,6 +28,11 @@ const MODULE_VERSION = (() => {
   try { return new URL(import.meta.url).searchParams.get('v') || ''; } catch { return ''; }
 })();
 const versioned = (specifier) => (MODULE_VERSION ? `${specifier}?v=${MODULE_VERSION}` : specifier);
+// These startup fixes must refresh with the release, including for returning users.
+const [{ FileUploadManager }, { resolveInitialScene, readStoredScene, forgetStoredScene, DEFAULT_SCENE }] = await Promise.all([
+  import(versioned('./utils/FileUploadManager.js')),
+  import(versioned('./utils/initialScene.js')),
+]);
 
 // Upper bound on physics steps in a single animation frame. The catch-up loop is
 // driven by wall clock, so with a small enough timestep one frame can ask for tens
@@ -203,7 +206,7 @@ emitAnalytics('wasm_load_completed', {
 
 // Set up Emscripten's Virtual File System
 const STORAGE_KEY_SCENE = 'robospace_last_scene';
-var initialScene = resolveInitialScene(readStoredScene(localStorage));
+var initialScene = resolveInitialScene(readStoredScene());
 setStage('setting up the virtual filesystem');
 mujoco.FS.mkdir('/working');
 mujoco.FS.mount(mujoco.MEMFS, { root: '.' }, '/working');
@@ -228,7 +231,7 @@ try {
   // This used to throw at module top level with nothing clearing the stored key,
   // so the page then failed to boot on every subsequent load.
   console.error(`[robospace] falling back to ${DEFAULT_SCENE}:`, err);
-  forgetStoredScene(localStorage);
+  forgetStoredScene();
   if (initialScene === DEFAULT_SCENE) throw err;
   initialScene = DEFAULT_SCENE;
   setStage(`fetching the default scene (${initialScene})`);

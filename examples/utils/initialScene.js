@@ -20,7 +20,9 @@ export const BUILTIN_SCENES = [DEFAULT_SCENE];
  */
 export function readStoredScene(storage) {
   try {
-    return storage.getItem('robospace_last_scene');
+    // Access the browser property inside the boundary too: its getter can throw
+    // before getItem is even called.
+    return (storage ?? globalThis.localStorage).getItem('robospace_last_scene');
   } catch (_) {
     return null;
   }
@@ -28,7 +30,7 @@ export function readStoredScene(storage) {
 
 export function forgetStoredScene(storage) {
   try {
-    storage.removeItem('robospace_last_scene');
+    (storage ?? globalThis.localStorage).removeItem('robospace_last_scene');
   } catch (_) { /* nothing to do; the caller is already falling back */ }
 }
 

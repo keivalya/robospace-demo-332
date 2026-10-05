@@ -52,6 +52,11 @@ export function createCodeEditor(hostEl, initialValue = '', onChange = null) {
             });
         },
         focus() { view.focus(); },
+        goToLine(number) {
+            const line = view.state.doc.line(Math.max(1, Math.min(number, view.state.doc.lines)));
+            view.dispatch({ selection: { anchor: line.from, head: line.to }, scrollIntoView: true });
+            view.focus();
+        },
         /** Pass a keydown handler to be called before CodeMirror handles the event. */
         addKeyHandler(fn) {
             view.dom.addEventListener('keydown', fn);

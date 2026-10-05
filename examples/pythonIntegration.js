@@ -5,8 +5,11 @@ import { TEACHER_TASKS } from './utils/macroTeacher.js';
 import { getPosition, getQuaternion, readModelNames, readNames } from './mujocoUtils.js';
 import { matToQuat } from './utils/mjmath.js';
 import { solveIk } from './utils/ik.js';
-import { createCodeEditor } from './utils/CodeEditor.js';
+import { createEditorStorage } from './utils/editorStorage.js';
 import { BlockEditor } from './utils/BlockEditor.js';
+
+// Keep the editor's error-navigation API in sync with this versioned module.
+const { createCodeEditor } = await import(`./utils/CodeEditor.js${new URL(import.meta.url).search}`);
 
 export async function initializePythonEnvironment(demo) {
     if (!window.pyodide) throw new Error("Pyodide has not loaded");
@@ -3394,8 +3397,12 @@ export function setupPythonIDE(demo) {
     const editorHost = document.getElementById('python-code-editor');
     const stopButton = document.getElementById('stop-python');
 
+    const editorStorage = createEditorStorage(() => window.localStorage, () => {
+        window.pythonOutput('Browser storage is unavailable. Your edits work for this session; use Save to download a copy before closing the page.');
+    });
+
     // ── CodeMirror editor ──────────────────────────────────────
-    const savedScript = localStorage.getItem(STORAGE_KEY_SCRIPT);
+    const savedScript = editorStorage.getItem(STORAGE_KEY_SCRIPT);
     const initialScript = savedScript !== null ? savedScript : DEFAULT_SCRIPT;
 
     let _suppressDirty = false;
@@ -3405,7 +3412,7 @@ export function setupPythonIDE(demo) {
         clearTimeout(_saveTimer);
         _saveTimer = setTimeout(() => {
             if (_currentMode === 'python') {
-                localStorage.setItem(STORAGE_KEY_SCRIPT, getCode());
+                editorStorage.setItem(STORAGE_KEY_SCRIPT, getCode());
             }
             window._roboDemo?.parentBridge?.emitDirty('script');
         }, 500);
@@ -3423,7 +3430,7 @@ export function setupPythonIDE(demo) {
         codeArea.value = initialScript;
     }
 
-    let _currentMode = localStorage.getItem('robospace_editor_mode') || 'python';
+    let _currentMode = editorStorage.getItem('robospace_editor_mode') || 'python';
 
     const getCode = () => {
         if (_currentMode === 'blocks') {
@@ -3439,7 +3446,7 @@ export function setupPythonIDE(demo) {
         try {
             if (_editor) _editor.setValue(text);
             else codeArea.value = text;
-            localStorage.setItem(STORAGE_KEY_SCRIPT, text);
+            editorStorage.setItem(STORAGE_KEY_SCRIPT, text);
         } finally {
             if (silent) _suppressDirty = false;
         }
@@ -3482,8 +3489,9 @@ export function setupPythonIDE(demo) {
     }
 
     const setEditorMode = (mode) => {
+        mode = mode === 'blocks' ? 'blocks' : 'python';
         _currentMode = mode;
-        localStorage.setItem('robospace_editor_mode', mode);
+        editorStorage.setItem('robospace_editor_mode', mode);
         [modeBtnPython, modeBtnBlocks].forEach((btn) => {
             if (btn) {
                 btn.classList.remove('active');
@@ -3498,6 +3506,7 @@ export function setupPythonIDE(demo) {
             }
             if (blocklyHost) blocklyHost.style.display = 'block';
             if (editorHost) editorHost.style.display = 'none';
+            codeArea.style.display = 'none';
             _blockEditor?.resize();
         } else { // default 'python'
             if (modeBtnPython) {
@@ -3505,7 +3514,8 @@ export function setupPythonIDE(demo) {
                 modeBtnPython.setAttribute('aria-selected', 'true');
             }
             if (blocklyHost) blocklyHost.style.display = 'none';
-            if (editorHost) editorHost.style.display = 'block';
+            if (editorHost) editorHost.style.display = _editor ? 'block' : 'none';
+            codeArea.style.display = _editor ? 'none' : 'block';
             _editor?.focus();
         }
     };
@@ -3513,7 +3523,7 @@ export function setupPythonIDE(demo) {
     if (modeBtnPython) modeBtnPython.addEventListener('click', () => setEditorMode('python'));
     if (modeBtnBlocks) modeBtnBlocks.addEventListener('click', () => setEditorMode('blocks'));
 
-    const initialMode = localStorage.getItem('robospace_editor_mode') || 'python';
+    const initialMode = editorStorage.getItem('robospace_editor_mode') || 'python';
     setEditorMode(initialMode);
 
     // Clear output
@@ -3581,12 +3591,13 @@ export function setupPythonIDE(demo) {
         const code = getCode();
         if (!code.trim()) return;
 
-        localStorage.setItem(STORAGE_KEY_SCRIPT, code);
+        editorStorage.setItem(STORAGE_KEY_SCRIPT, code);
         window._roboDemo?.parentBridge?.emitDirty('script');
 
         if (_interruptBuffer) _interruptBuffer[0] = 0;
         window._pythonShouldStop = false;
 
+        window.lastUserErrorLine = null;
         outputArea.innerHTML = '';
         window.pythonOutput("Running...\n");
         _setRunning(true);
@@ -3608,6 +3619,24 @@ export function setupPythonIDE(demo) {
             window.pythonOutput("\n✓ Execution completed");
         } catch (error) {
             reportPythonError(error);
+            const errorLine = window.lastUserErrorLine;
+            if (_currentMode === 'python' && Number.isInteger(errorLine) && errorLine > 0) {
+                const jump = document.createElement('button');
+                jump.type = 'button';
+                jump.className = 'ide-button save';
+                jump.textContent = `Go to error line ${errorLine}`;
+                jump.addEventListener('click', () => {
+                    if (_editor) _editor.goToLine(errorLine);
+                    else {
+                        const lines = codeArea.value.split('\n');
+                        const line = Math.min(errorLine, lines.length) - 1;
+                        const start = lines.slice(0, line).reduce((n, text) => n + text.length + 1, 0);
+                        codeArea.focus();
+                        codeArea.setSelectionRange(start, start + lines[line].length);
+                    }
+                });
+                outputArea.appendChild(jump);
+            }
         } finally {
             // Flush a trailing partial line, e.g. print("x", end="") before a throw.
             try { window.pyodide.runPython('import sys; sys.stdout.flush(); sys.stderr.flush()'); } catch (_) { }

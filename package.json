@@ -28,7 +28,8 @@
     "test:challenges": "node --import ./test/register.mjs test/challenge-evaluator.test.mjs",
     "test:dataset": "node test/data-logger.test.mjs && node test/lerobot-exporter.test.mjs && node test/macro-teacher.test.mjs && node test/camera-capture.test.mjs",
     "test:analytics": "node test/analytics.test.mjs",
-    "test:language": "python3 tools/check-language-match.py"
+    "test:language": "python3 tools/check-language-match.py",
+    "test:editor-upload": "node --test test/editor-upload.test.mjs"
   },
   "repository": {
     "type": "git",
@@ -47,5 +48,8 @@
   "dependencies": {
     "@mujoco/mujoco": "^3.14.0",
     "three": "^0.150.1"
+  },
+  "devDependencies": {
+    "linkedom": "0.18.12"
   }
 }

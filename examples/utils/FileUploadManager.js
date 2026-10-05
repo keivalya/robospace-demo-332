@@ -1,5 +1,6 @@
 // examples/utils/FileUploadManager.js
 import { URDFConverter } from './URDFConverter.js';
+import { assertSafeSceneName, safeRelativePath } from './safePath.js';
 
 export class FileUploadManager {
     constructor(mujoco, parentContext) {
@@ -95,20 +96,29 @@ export class FileUploadManager {
       document.getElementById('select-assets-btn').addEventListener('click', () => assetsInput.click());
 
       document.getElementById('load-robot-btn').addEventListener('click', async () => {
+        const loadButton = document.getElementById('load-robot-btn');
+        loadButton.disabled = true;
         try {
           await this.loadUploadedScene();
-        } finally {
           uploadDialog.style.display = 'none';
+        } catch (error) {
+          const status = document.getElementById('xml-status');
+          status.textContent = `Could not load robot: ${error.message} Check the model and select a corrected file to retry.`;
+          status.style.color = '#ef4444';
+        } finally {
+          loadButton.disabled = !this.currentUploadPath;
         }
       });
 
       xmlInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
+        xmlInput.value = ''; // Allow selecting the same file again after correcting it.
         if (file) await this.handleMainFileUpload(file);
       });
 
       assetsInput.addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
+        assetsInput.value = '';
         if (files.length > 0) await this.handleAssetsUpload(files);
       });
     }
@@ -122,6 +132,7 @@ export class FileUploadManager {
     }
 
     async handleMainFileUpload(file) {
+      this.resetUploadState();
       if (file.name.toLowerCase().endsWith('.zip')) {
         await this.handleZipUpload(file);
       } else if (file.name.toLowerCase().endsWith('.urdf')) {
@@ -145,6 +156,7 @@ export class FileUploadManager {
       try {
         const zip = await JSZip.loadAsync(file);
         const zipName = file.name.replace(/\.zip$/i, '');
+        assertSafeSceneName(zipName);
         this.currentUploadPath = `custom_scenes/${zipName}`;
         this.createDirectory(`/working/custom_scenes`);
         this.createDirectory(`/working/${this.currentUploadPath}`);
@@ -196,7 +208,7 @@ export class FileUploadManager {
             content = await zipEntry.async('string');
           }
 
-          const destPath = `/working/${this.currentUploadPath}/assets/${fileName}`;
+          const destPath = `/working/${this.currentUploadPath}/assets/${safeRelativePath(fileName)}`;
           this.ensureParentDirectories(destPath);
           this.mujoco.FS.writeFile(destPath, content);
           assetCount++;
@@ -229,6 +241,7 @@ export class FileUploadManager {
 
         const urdfContent = await this.readFileAsText(file);
         const sceneName = file.name.replace(/\.urdf$/i, '');
+        assertSafeSceneName(sceneName);
 
         const conv = URDFConverter.convert(urdfContent, sceneName);
         if (conv.errors.length > 0) {
@@ -250,7 +263,7 @@ export class FileUploadManager {
         this.uploadedFiles.set(sceneName, {
           xmlPath: `${this.currentUploadPath}/scene.xml`,
           includes: new Set(),
-          assets: new Set(conv.meshes),
+          assets: new Set(conv.meshes.map(safeRelativePath)),
           loadedFiles: new Set([`${this.currentUploadPath}/scene.xml`]),
           robotName: conv.robotName
         });
@@ -281,7 +294,8 @@ export class FileUploadManager {
         const references = this.extractReferencedFiles(xmlDoc);
         
         // Store upload info
-        const sceneName = file.name.replace('.xml', '');
+        const sceneName = file.name.replace(/\.xml$/i, '');
+        assertSafeSceneName(sceneName);
         this.currentUploadPath = `custom_scenes/${sceneName}`;
         
         // Create directories
@@ -313,7 +327,9 @@ export class FileUploadManager {
         
       } catch (error) {
         console.error('Error uploading XML:', error);
-        alert(`Error: ${error.message}`);
+        const status = document.getElementById('xml-status');
+        status.textContent = `XML Error: ${error.message}`;
+        status.style.color = '#ef4444';
       }
     }
 
@@ -328,52 +344,60 @@ export class FileUploadManager {
     }
   
     async handleAssetsUpload(files) {
-      const sceneName = this.currentUploadPath.split('/')[1];
-      const sceneInfo = this.uploadedFiles.get(sceneName);
       const assetsStatus = document.getElementById('assets-status');
+      try {
+        const sceneName = this.currentUploadPath?.split('/')[1];
+        const sceneInfo = this.uploadedFiles.get(sceneName);
+        if (!sceneInfo) throw new Error('Select a robot file first');
       
-      for (const file of files) {
-        const destination = this.resolveDestinationPath(file.name, sceneInfo) || `/working/${this.currentUploadPath}/assets/${file.name}`;
+        for (const file of files) {
+          const destination = this.resolveDestinationPath(file.name, sceneInfo) || `/working/${this.currentUploadPath}/assets/${safeRelativePath(file.name)}`;
 
-        let content;
-        if (file.name.match(/\.(png|jpg|jpeg|stl)$/i)) {
-          content = await this.readFileAsArrayBuffer(file);
-          content = new Uint8Array(content);
-        } else {
-          content = await this.readFileAsText(file);
+          let content;
+          if (file.name.match(/\.(png|jpg|jpeg|stl)$/i)) {
+            content = await this.readFileAsArrayBuffer(file);
+            content = new Uint8Array(content);
+          } else {
+            content = await this.readFileAsText(file);
+          }
+
+          this.ensureParentDirectories(destination);
+          this.mujoco.FS.writeFile(destination, content);
+          sceneInfo.loadedFiles.add(this.normalizePath(destination));
+
+          if (file.name.endsWith('.xml')) {
+            this.mergeReferencedFiles(content, sceneInfo);
+          }
         }
-
-        this.ensureParentDirectories(destination);
-        this.mujoco.FS.writeFile(destination, content);
-        sceneInfo.loadedFiles.add(this.normalizePath(destination));
-
-        if (file.name.endsWith('.xml')) {
-          this.mergeReferencedFiles(content, sceneInfo);
-        }
+      
+        assetsStatus.textContent = `Uploaded ${files.length} file(s)`;
+        assetsStatus.style.color = '#22c55e';
+        this.refreshRequiredFilesUI(sceneInfo);
+      } catch (error) {
+        assetsStatus.textContent = `Asset Error: ${error.message}`;
+        assetsStatus.style.color = '#ef4444';
+        document.getElementById('load-robot-btn').disabled = true;
       }
-      
-      assetsStatus.textContent = `Uploaded ${files.length} file(s)`;
-      assetsStatus.style.color = '#22c55e';
-      this.refreshRequiredFilesUI(sceneInfo);
     }
   
     extractReferencedFiles(xmlDoc) {
+      if (xmlDoc.querySelector('parsererror')) throw new Error('Invalid XML: check the document syntax');
       const includes = new Set();
       const assets = new Set();
       
       xmlDoc.querySelectorAll('include').forEach(include => {
         const file = include.getAttribute('file');
-        if (file) includes.add(file);
+        if (file) includes.add(safeRelativePath(file));
       });
       
       xmlDoc.querySelectorAll('mesh').forEach(mesh => {
         const file = mesh.getAttribute('file');
-        if (file) assets.add(file);
+        if (file) assets.add(safeRelativePath(file));
       });
       
       xmlDoc.querySelectorAll('texture').forEach(texture => {
         const file = texture.getAttribute('file');
-        if (file) assets.add(file);
+        if (file) assets.add(safeRelativePath(file));
       });
       
       return {
@@ -383,8 +407,13 @@ export class FileUploadManager {
     }
   
     async loadUploadedScene() {
-      const sceneName = this.currentUploadPath.split('/')[1];
+      const sceneName = this.currentUploadPath?.split('/')[1];
       const sceneInfo = this.uploadedFiles.get(sceneName);
+      if (!sceneInfo) throw new Error('Select a robot file first');
+
+      // Compile first. A rejected scene must not replace the selected scene or
+      // params.scene while the previous, valid robot is still rendering.
+      await this.parentContext.reloadScene(sceneInfo.xmlPath);
 
       if (this.parentContext.parentBridge?._ensureSceneOption) {
         this.parentContext.parentBridge._ensureSceneOption(sceneInfo.robotName || sceneName, sceneInfo.xmlPath);
@@ -402,14 +431,7 @@ export class FileUploadManager {
         }
       }
       
-      this.parentContext.params.scene = sceneInfo.xmlPath;
-      try {
-        await this.parentContext.reloadScene();
-        this.parentContext.parentBridge?.emitDirty('assets');
-      } catch (error) {
-        console.error('Error loading uploaded scene:', error);
-        throw error;
-      }
+      this.parentContext.parentBridge?.emitDirty('assets');
     }
   
     createDirectory(path) {
@@ -445,7 +467,7 @@ export class FileUploadManager {
         return null;
       }
 
-      return `/working/${this.currentUploadPath}/${matchedReference.replace(/\\/g, '/')}`;
+      return `/working/${this.currentUploadPath}/${safeRelativePath(matchedReference)}`;
     }
 
     hasLoadedReference(reference, sceneInfo) {
@@ -483,13 +505,19 @@ export class FileUploadManager {
       }
 
       requiredFiles.style.display = 'block';
-      requiredFiles.innerHTML = '<strong>Required files:</strong><br>' +
-        allFiles.map(file => {
-          const isLoaded = !missingFiles.includes(file);
-          const color = isLoaded ? '#22c55e' : '#f5a524';
-          const marker = isLoaded ? '✓' : '•';
-          return `<span style="color: ${color};">${marker} ${file}</span>`;
-        }).join('<br>');
+      requiredFiles.replaceChildren();
+      const heading = document.createElement('strong');
+      heading.textContent = `Required files (${allFiles.length - missingFiles.length}/${allFiles.length} ready):`;
+      requiredFiles.appendChild(heading);
+      for (const file of allFiles) {
+        const isLoaded = !missingFiles.includes(file);
+        const row = document.createElement('span');
+        row.style.color = isLoaded ? '#22c55e' : '#f5a524';
+        // XML/URDF file attributes are untrusted text, never HTML.
+        row.textContent = `${isLoaded ? '✓' : '•'} ${file}`;
+        requiredFiles.appendChild(document.createElement('br'));
+        requiredFiles.appendChild(row);
+      }
 
       document.getElementById('load-robot-btn').disabled = missingFiles.length > 0;
     }
